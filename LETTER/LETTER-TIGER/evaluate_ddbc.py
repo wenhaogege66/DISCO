@@ -95,9 +95,8 @@ def _seq_mode_metrics(pred_items, label_list):
     precision     = intersection / total_pred  if total_pred  > 0 else 0.0
     hits          = {f'hit_{n}': (1 if intersection >= n else 0) for n in range(1, 6)}
     hit_full      = 1 if pred_counter == label_counter else 0
-    pred_set      = set(pred_items)
     T             = len(label_list)
-    sh            = sum(1 for y_t in label_list if y_t in pred_set)
+    sh            = sum(min(pred_counter[k], label_counter[k]) for k in label_counter)
     sm            = sh / T if T > 0 else 0.0
     return {'recall': recall, 'precision': precision, **hits, 'hit_full': hit_full,
             'sm': sm, 'sh': float(sh), 'sn': sm}
@@ -277,13 +276,24 @@ def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
                         cands, item2token_ids, device
                     )
 
-                    top_indices = np.argsort(scores)[::-1][:predict_n]
-                    pred_items  = [cands[idx] for idx in top_indices]
+                    # AR mode: predict_n steps, full candidate pool each step (allows duplicates)
+                    pred_items = []
+                    step_hits  = []
+                    cur_valid  = list(seq[:len_seq])  # 0-based valid items
+                    for t in range(predict_n):
+                        cur_inp, cur_mask = tokenize_seq_for_eval(tokenizer, cur_valid, len(cur_valid))
+                        step_scores = score_candidates(
+                            model, tokenizer, cur_inp, cur_mask,
+                            cands, item2token_ids, device
+                        )
+                        best_idx  = int(np.argmax(step_scores))
+                        best_item = cands[best_idx]
+                        pred_items.append(best_item)
+                        true_label = labels[t] if t < len(labels) else -1
+                        step_hits.append(1 if true_label == best_item else 0)
+                        cur_valid.append(best_item)
 
                     m = _seq_mode_metrics(pred_items, labels)
-
-                    topk_items = pred_items[:1]
-                    step_hits  = [1 if y_t in topk_items else 0 for y_t in labels]
                     sm_metrics = _stepwise_sm_metrics(step_hits, predict_n)
                     m.update(sm_metrics)
 

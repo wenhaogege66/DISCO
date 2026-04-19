@@ -65,9 +65,8 @@ def _seq_mode_metrics(pred_items, label_list):
     precision = intersection / total_pred  if total_pred  > 0 else 0.0
     hits      = {f'hit_{n}': (1 if intersection >= n else 0) for n in range(1, 6)}
     hit_full  = 1 if pred_counter == label_counter else 0
-    pred_set  = set(pred_items)
     T  = len(label_list)
-    sh = sum(1 for y_t in label_list if y_t in pred_set)
+    sh = sum(min(pred_counter[k], label_counter[k]) for k in label_counter)
     sm = sh / T if T > 0 else 0.0
     return {'recall': recall, 'precision': precision, **hits, 'hit_full': hit_full,
             'sm': sm, 'sh': float(sh), 'sn': sm}
@@ -140,52 +139,55 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
                     s      = slice(bi * batch_size, min((bi + 1) * batch_size, num_total))
                     cands_b = candidate_pool[s.start:s.stop]   # 0-based
 
-                    # ── Build input sequence (BERT4Rec 1-based format, mask at last pos) ──
+                    # ── Build base sequences (1-based, no MASK yet) ──
                     raw_seqs = seq_list[s]
-                    batch_seqs = []
-                    for raw_seq, slen in zip(raw_seqs, len_seq_list[s]):
-                        # raw_seq: 0-based items padded with 20033
-                        # convert to 1-based, PAD=0, append MASK token
-                        converted = []
-                        for x in raw_seq:
-                            converted.append(0 if x == item_num else x + 1)
-                        seq_1based = converted + [mask_token]
-                        seq_1based = seq_1based[-max_len:]
-                        pad_len = max_len - len(seq_1based)
-                        seq_1based = [0] * pad_len + seq_1based
-                        batch_seqs.append(seq_1based)
+                    base_seqs = []
+                    for raw_seq in raw_seqs:
+                        base_seqs.append([0 if x == item_num else x + 1 for x in raw_seq])
 
-                    states = torch.LongTensor(batch_seqs).to(device)  # [B, max_len]
-                    logits = model(states)       # [B, max_len, vocab]
-                    last_scores = logits[:, -1, :]  # [B, vocab]  (vocab = item_num+2)
+                    B = len(cands_b)
+                    preds_batch = [[] for _ in range(B)]
+                    step_hits_batch = [[] for _ in range(B)]
 
-                    # ── Score candidates (0-based → 1-based) ──
-                    max_cand_len = max(len(c) for c in cands_b)
-                    padded_cands_1based = []
-                    for c in cands_b:
-                        c1 = [x + 1 for x in c]  # shift to 1-based
-                        c1 += [1] * (max_cand_len - len(c1))  # pad with dummy (won't be selected)
-                        padded_cands_1based.append(c1)
-                    cand_ids = torch.LongTensor(padded_cands_1based).to(device)  # [B, C]
-                    scores_np = last_scores.gather(1, cand_ids).detach().cpu().numpy()  # [B, C]
+                    # AR mode: predict_n steps, full candidate pool each step (allows duplicates)
+                    for t in range(predict_n):
+                        batch_seqs = []
+                        for base_seq in base_seqs:
+                            seq_with_mask = base_seq + [mask_token]
+                            seq_with_mask = seq_with_mask[-max_len:]
+                            pad_len = max_len - len(seq_with_mask)
+                            batch_seqs.append([0] * pad_len + seq_with_mask)
 
-                    # mask padded positions
-                    for j in range(len(cands_b)):
-                        actual_len = len(cands_b[j])
-                        if actual_len < max_cand_len:
-                            scores_np[j, actual_len:] = -np.inf
+                        states = torch.LongTensor(batch_seqs).to(device)
+                        logits = model(states)
+                        last_scores = logits[:, -1, :]
 
-                    for j in range(len(cands_b)):
-                        top_indices  = np.argsort(scores_np[j])[::-1][:predict_n]
-                        pred_items   = [cands_b[j][idx] for idx in top_indices]  # 0-based
-                        label_items  = list(labels_list[s.start + j])            # 0-based
+                        max_cand_len = max(len(c) for c in cands_b)
+                        padded_cands_1based = []
+                        for c in cands_b:
+                            c1 = [x + 1 for x in c]
+                            c1 += [1] * (max_cand_len - len(c1))
+                            padded_cands_1based.append(c1)
+                        cand_ids = torch.LongTensor(padded_cands_1based).to(device)
+                        scores_np = last_scores.gather(1, cand_ids).detach().cpu().numpy()
+
+                        for j in range(B):
+                            actual_len = len(cands_b[j])
+                            if actual_len < max_cand_len:
+                                scores_np[j, actual_len:] = -np.inf
+                            best_idx  = int(np.argmax(scores_np[j]))
+                            best_item = cands_b[j][best_idx]  # 0-based
+                            preds_batch[j].append(best_item)
+                            true_label = list(labels_list[s.start + j])[t] if t < len(labels_list[s.start + j]) else -1
+                            step_hits_batch[j].append(1 if true_label == best_item else 0)
+                            base_seqs[j].append(best_item + 1)  # append predicted item (1-based)
+
+                    for j in range(B):
+                        pred_items  = preds_batch[j]
+                        label_items = list(labels_list[s.start + j])
 
                         m = _seq_mode_metrics(pred_items, label_items)
-
-                        topk_indices = np.argsort(scores_np[j])[::-1][:topk]
-                        topk_items   = [cands_b[j][idx] for idx in topk_indices]
-                        step_hits    = [1 if y_t in topk_items else 0 for y_t in label_items]
-                        sm_metrics   = _stepwise_sm_metrics(step_hits, predict_n)
+                        sm_metrics = _stepwise_sm_metrics(step_hits_batch[j], predict_n)
                         m.update(sm_metrics)
 
                         for k in metric_accum:

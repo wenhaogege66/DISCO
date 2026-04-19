@@ -10,6 +10,7 @@ import time
 import torch
 import argparse
 import ast
+from torch.utils.tensorboard import SummaryWriter
 
 from model import SASRec
 from utils import data_partition, WarpSampler
@@ -47,6 +48,8 @@ parser.add_argument('--ddbc_predict_nums', default='[3]', type=str,
 parser.add_argument('--ddbc_multipliers',  default='[19]', type=str,
                     help='List of candidate multipliers, e.g. "[9,19,49,99]"')
 parser.add_argument('--ddbc_seed',         default=100,   type=int)
+parser.add_argument('--tb_log_dir',        default='',    type=str,
+                    help='TensorBoard log dir (default: <folder>/tensorboard)')
 
 args = parser.parse_args()
 args.ddbc_predict_nums = ast.literal_eval(args.ddbc_predict_nums)
@@ -104,6 +107,11 @@ if __name__ == '__main__':
     f_log.write('epoch val_recall@3_x19\n')
 
     t0 = time.time()
+
+    tb_log_dir = args.tb_log_dir if args.tb_log_dir else os.path.join(folder, 'tensorboard')
+    writer = SummaryWriter(log_dir=tb_log_dir)
+    print(f'TensorBoard log dir: {tb_log_dir}')
+
     for epoch in range(epoch_start_idx, args.num_epochs + 1):
         model.train()
         for step in range(num_batch):
@@ -123,6 +131,8 @@ if __name__ == '__main__':
             adam_optimizer.step()
             print(f'loss in epoch {epoch} iteration {step}: {loss.item():.4f}')
 
+        writer.add_scalar('train/loss', loss.item(), epoch)
+
         if epoch % args.eval_interval == 0:
             t1 = time.time() - t0
             print(f'\n[Epoch {epoch}] time={t1:.1f}s — running DDBC val eval...')
@@ -131,10 +141,12 @@ if __name__ == '__main__':
                 predict_nums=args.ddbc_predict_nums,
                 multipliers=args.ddbc_multipliers,
                 seed=args.ddbc_seed,
+                writer=writer, epoch=epoch,
                 split='val'
             )
             f_log.write(f'{epoch} {val_recall:.6f}\n')
             f_log.flush()
+            writer.add_scalar('val/ddbc_recall', val_recall, epoch)
 
             if val_recall > best_val_recall:
                 best_val_recall  = val_recall
@@ -163,6 +175,7 @@ if __name__ == '__main__':
 
     f_log.close()
     sampler.close()
+    writer.close()
 
     # ── Post-training: test evaluation with best checkpoint ───────────────────
     print(f'\n[Training done] Best epoch={best_epoch}, val_recall@3_x19={best_val_recall:.4f}')
@@ -176,6 +189,7 @@ if __name__ == '__main__':
             predict_nums=args.ddbc_predict_nums,
             multipliers=args.ddbc_multipliers,
             seed=args.ddbc_seed,
+            writer=writer, epoch=best_epoch,
             split='test'
         )
     else:

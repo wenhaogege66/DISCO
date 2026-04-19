@@ -100,10 +100,8 @@ class BertTrainDataset(data_utils.Dataset):
 
                 if prob < 0.8:
                     tokens.append(self.mask_token)
-                elif prob < 0.9:
-                    tokens.append(self.rng.randint(1, self.num_items))
                 else:
-                    tokens.append(s)
+                    tokens.append(s)  # no random-item replacement (disabled for fair comparison)
 
                 labels.append(s)
             else:

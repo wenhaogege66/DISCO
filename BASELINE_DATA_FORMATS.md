@@ -61,7 +61,7 @@
 - 结构：`SessionId, ItemId, Time`
 - 训练时按时间顺序做 next-item：`item_t -> item_{t+1}`。
 
-### DiffuRec
+### DiffuRec√
 - 文件：`dataset.pkl['train']`
 - 结构：`{session_id: [item1..item10]}`
 - 内部再用 `split_onebyone()` 展开前缀序列。
@@ -71,7 +71,7 @@
 - 结构：每行 `user_id item_id`（按时间顺序）
 - 内部 `data_partition` 做 leave-one-out，再在 sampler 中构造 next-item 训练对。
 
-### BERT4Rec
+### BERT4Rec√
 - 文件：`dataset.pkl['train']`（1-based item id）
 - 结构：`{session_id: [item1..item10]}`
 - 训练时对序列随机 mask（MLM 目标）。

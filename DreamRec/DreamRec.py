@@ -524,10 +524,9 @@ def _seq_mode_metrics(pred_items, label_list):
     # hit_full：预测集与标签集完全一致（multiset 相等）
     hit_full = 1 if pred_counter == label_counter else 0
 
-    # Sequential Match metrics: binary membership check per label position
-    pred_set = set(pred_items)
+    # Sequential Match metrics: Counter-based (handles duplicate labels)
     T = len(label_list)
-    sh = sum(1 for y_t in label_list if y_t in pred_set)
+    sh = sum(min(pred_counter[k], label_counter[k]) for k in label_counter)
     sm = sh / T if T > 0 else 0.0
 
     return {'recall': recall, 'precision': precision, **hits, 'hit_full': hit_full,

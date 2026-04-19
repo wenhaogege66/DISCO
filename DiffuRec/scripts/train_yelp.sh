@@ -23,8 +23,8 @@ CUDA_VISIBLE_DEVICES=1 python /home/sjj/wenhao/DiffuRec/src/main.py \
     --lambda_uncertainty 0.001 \
     --eval_interval     20 \
     --patience          5 \
-    --predict_nums      "3,5" \
-    --candidate_multipliers "9,19,49,99" \
+    --predict_nums      "3" \
+    --candidate_multipliers "19" \
     --topk              1 \
     --ddbc_data_dir     /home/sjj/wenhao/DreamRec/data/yelp \
     --tb_log_dir        /home/sjj/wenhao/DiffuRec/tensorboard/yelp \

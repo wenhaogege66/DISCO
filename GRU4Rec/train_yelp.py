@@ -230,9 +230,9 @@ def _seq_mode_metrics(pred_items, label_list):
     hits = {f'hit_{j}': int(inter >= j) for j in range(1, 6)}
     hits['hit_full'] = int(pred_c == label_c)
 
-    # SM: fraction of labels found in predictions (set-level, not positional)
-    pred_set = set(pred_items)
-    sm = sum(1 for lbl in label_list if lbl in pred_set) / n_label if n_label > 0 else 0.0
+    # SM: Counter-based (handles duplicate labels)
+    sh = sum(min(pred_c[k], label_c[k]) for k in label_c)
+    sm = sh / n_label if n_label > 0 else 0.0
 
     return recall, precision, hits, sm
 
@@ -466,10 +466,6 @@ def _ar_predict(model, H, batch_cands, predict_n, topk, labels_list, device):
             top_topk_items = {int(cand_tensor[i, j].item()) for j in top_topk_local}
             true_label = list(labels_list[i])[step] if step < len(labels_list[i]) else -1
             step_hits_batch[i].append(int(true_label in top_topk_items))
-
-            # Remove predicted item from remaining candidates
-            if best_item in remaining[i]:
-                remaining[i].remove(best_item)
 
         # Feed predicted items back into GRU to update hidden states
         pred_items_t = torch.tensor(
