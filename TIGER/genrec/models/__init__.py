@@ -1,0 +1,2 @@
+from genrec.models.TIGER.model import TIGER
+
