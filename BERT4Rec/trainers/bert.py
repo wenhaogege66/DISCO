@@ -4,7 +4,7 @@ import json
 import pickle
 import numpy as np
 import pandas as pd
-from collections import Counter
+from collections import Counter, OrderedDict
 from pathlib import Path
 
 import torch
@@ -214,6 +214,22 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
                 writer.add_scalar(f'{prefix}/{metric_name}', val, epoch)
 
     main_key = (predict_nums[0], multipliers[0])
+    main_metrics = all_results.get(main_key, {})
+    output_results = OrderedDict([
+        ('recall@1',    round(main_metrics.get('recall', 0.0), 4)),
+        ('precision@1', round(main_metrics.get('precision', 0.0), 4)),
+        ('hit_1@1',     round(main_metrics.get('hit_1', 0.0), 4)),
+        ('hit_2@1',     round(main_metrics.get('hit_2', 0.0), 4)),
+        ('hit_3@1',     round(main_metrics.get('hit_3', 0.0), 4)),
+        ('hit_4@1',     round(main_metrics.get('hit_4', 0.0), 4)),
+        ('hit_5@1',     round(main_metrics.get('hit_5', 0.0), 4)),
+        ('hit_full@1',  round(main_metrics.get('hit_full', 0.0), 4)),
+        ('sm@1',        round(main_metrics.get('sm', 0.0), 4)),
+        ('sh@1',        round(main_metrics.get('sh', 0.0), 4)),
+        ('sn@1',        round(main_metrics.get('sn', 0.0), 4)),
+    ])
+    print(f"output_results {output_results}")
+
     return all_results.get(main_key, {}).get('recall', 0.0)
 
 

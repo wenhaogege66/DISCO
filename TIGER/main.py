@@ -6,6 +6,7 @@ def parse_args():
     parser.add_argument('--model', type=str, default='TIGER', help='Model name')
     parser.add_argument('--dataset', type=str, default='AmazonReviews2014', help='Dataset name')
     parser.add_argument('--process_only', action='store_true', help='Only process data, do not train')
+    parser.add_argument('--mode', type=str, default=None, help='Run mode: train or test')
     return parser.parse_known_args()
 
 
@@ -15,6 +16,8 @@ if __name__ == '__main__':
     args, unparsed_args = parse_args()
 
     command_line_configs = parse_command_line_args(unparsed_args)
+    if args.mode is not None:
+        command_line_configs['mode'] = args.mode
 
     pipeline = get_pipeline(args.model)      \
             (

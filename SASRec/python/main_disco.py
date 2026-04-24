@@ -38,6 +38,8 @@ parser.add_argument('--l2_emb',           default=0.0,   type=float)
 parser.add_argument('--device',           default='cuda', type=str)
 parser.add_argument('--norm_first',       action='store_true', default=False)
 parser.add_argument('--state_dict_path',  default=None,  type=str)
+parser.add_argument('--item_num',         default=0,     type=int,
+                    help='Override itemnum (0 = auto-detect from data file)')
 # DDBC-specific
 parser.add_argument('--eval_interval',    default=5,     type=int,
                     help='Evaluate every N epochs')
@@ -50,6 +52,8 @@ parser.add_argument('--ddbc_multipliers',  default='[19]', type=str,
 parser.add_argument('--ddbc_seed',         default=100,   type=int)
 parser.add_argument('--tb_log_dir',        default='',    type=str,
                     help='TensorBoard log dir (default: <folder>/tensorboard)')
+parser.add_argument('--mode',              default='train', type=str,
+                    help='train or test')
 
 args = parser.parse_args()
 args.ddbc_predict_nums = ast.literal_eval(args.ddbc_predict_nums)
@@ -66,6 +70,30 @@ with open(os.path.join(folder, 'args.txt'), 'w') as f:
 if __name__ == '__main__':
     dataset = data_partition(args.dataset)
     [user_train, user_valid, user_test, usernum, itemnum] = dataset
+    if args.item_num > 0:
+        itemnum = args.item_num
+
+    if args.mode == 'test':
+        model = SASRec(usernum, itemnum, args).to(args.device)
+        ckpt_path = args.state_dict_path
+        if ckpt_path is None:
+            # find the single .pth file in the folder
+            pth_files = [f for f in os.listdir(folder) if f.endswith('.pth')]
+            if not pth_files:
+                print(f'[Test] No .pth checkpoint found in {folder}')
+                exit(1)
+            ckpt_path = os.path.join(folder, pth_files[0])
+        print(f'[Test] Loading checkpoint: {ckpt_path}')
+        model.load_state_dict(torch.load(ckpt_path, map_location=torch.device(args.device)))
+        evaluate_ddbc_sasrec(
+            model, args.maxlen, args.device,
+            predict_nums=args.ddbc_predict_nums,
+            multipliers=args.ddbc_multipliers,
+            seed=args.ddbc_seed,
+            writer=None, epoch=0,
+            split='test'
+        )
+        exit(0)
 
     num_batch = (len(user_train) - 1) // args.batch_size + 1
     cc = sum(len(user_train[u]) for u in user_train)

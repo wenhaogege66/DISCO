@@ -1,0 +1,8 @@
+- mode=rec_eval
+- evaluator.candidate_multiplier=19
+- evaluator.allow_duplicate_items=true
+- training.layer_loss_weights.enabled=false
+- loader.batch_size=32
+- loader.eval_batch_size=1
+- data=yelp
+- dataset=Yelp

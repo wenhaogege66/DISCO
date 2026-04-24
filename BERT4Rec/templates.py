@@ -3,7 +3,8 @@ def set_template(args):
         return
 
     elif args.template == 'train_bert_yelp':
-        args.mode = 'train'
+        if args.mode != 'test':   # 不覆盖命令行显式传入的 --mode test
+            args.mode = 'train'
         args.dataset_code = 'yelp'
 
         args.dataloader_code = 'bert'

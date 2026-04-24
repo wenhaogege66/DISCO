@@ -12,10 +12,13 @@
 #
 # 可选模型名: disco  dreamrec  difurec  gru4rec  sasrec  bert4rec  tiger  letter
 #
-# 所有模型的 log 和 ckpt 均包含 RUN_TAG，便于识别同批次实验。
+# 命名规范：所有 log 和 ckpt 均包含 DATASET 和 RUN_TAG，格式：
+#   log  : <Model>/logs/<DATASET>_<RUN_TAG>.log
+#   ckpt : <Model>/outputs/<DATASET>/<RUN_TAG>/best_model.*
+#
 # 强烈建议手动指定 RUN_TAG，训练和测试使用同一个名字：
-#   RUN_TAG=exp_yelp_v1 bash train_all.sh
-#   RUN_TAG=exp_yelp_v1 bash test_all.sh
+#   DATASET=yelp RUN_TAG=exp_yelp_v1 bash train_all.sh
+#   DATASET=yelp RUN_TAG=exp_yelp_v1 bash test_all.sh
 # 不指定时自动生成时间戳（仅用于一次性实验，测试时需手动对应）。
 # =============================================================================
 
@@ -23,15 +26,21 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ── 数据集（影响数据路径和输出目录）─────────────────────────────────────────
+DATASET="${DATASET:-yelp}"
+DATASET_CAP="${DATASET^}"   # yelp → Yelp，用于需要首字母大写的参数
+
 # ── 统一批次标签（所有模型共享，写入 log/ckpt 名称）──────────────────────────
 if [ -z "${RUN_TAG:-}" ]; then
     RUN_TAG="run_$(date +%Y%m%d_%H%M%S)"
     echo "[WARN] RUN_TAG 未指定，自动生成: $RUN_TAG"
-    echo "[WARN] 测试时请用: RUN_TAG=$RUN_TAG bash test_all.sh"
+    echo "[WARN] 测试时请用: DATASET=$DATASET RUN_TAG=$RUN_TAG bash test_all.sh"
 fi
 echo "================================================================"
-echo "  RUN_TAG = $RUN_TAG"
-echo "  所有模型的 log/ckpt 均以此标签命名"
+echo "  DATASET  = $DATASET"
+echo "  RUN_TAG  = $RUN_TAG"
+echo "  log/ckpt 命名: <Model>/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+echo "                 <Model>/outputs/${DATASET}/${RUN_TAG}/"
 echo "================================================================"
 
 # ── 选择要训练的模型 ──────────────────────────────────────────────────────────
@@ -150,7 +159,7 @@ BERT4REC_SEED=100
 TIGER_GPU=0
 TIGER_EPOCHS=200
 TIGER_BATCH_SIZE=256
-TIGER_EVAL_BATCH_SIZE=32
+TIGER_EVAL_BATCH_SIZE=8
 TIGER_EVAL_INTERVAL=5
 TIGER_PATIENCE=25
 TIGER_PREDICT_NUMS="[3]"
@@ -176,11 +185,11 @@ LETTER_SEED=100
 train_disco() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [DISCO] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [DISCO] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
     local LOG_DIR="$ROOT/DISCO/logs"
     mkdir -p "$LOG_DIR"
-    local LOG_FILE="$LOG_DIR/${RUN_TAG}.log"
+    local LOG_FILE="$LOG_DIR/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
 
     export CUDA_VISIBLE_DEVICES=$DISCO_GPUS
     export PYTHONPATH="$ROOT/DISCO:$PYTHONPATH"
@@ -194,9 +203,9 @@ train_disco() {
         trainer.max_steps=$DISCO_MAX_STEPS \
         model=small \
         model.hidden_size=$DISCO_HIDDEN_SIZE \
-        data=yelp \
-        dataset=Yelp \
-        run_name="disco-yelp-${RUN_TAG}" \
+        data=$DATASET \
+        dataset=$DATASET_CAP \
+        run_name="disco-${DATASET}-${RUN_TAG}" \
         parameterization=subs \
         seq_len=$DISCO_SEQ_LEN \
         rq_n_codebooks=$DISCO_RQ_N_CODEBOOKS \
@@ -218,20 +227,20 @@ train_disco() {
 train_dreamrec() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [DreamRec] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [DreamRec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
     export CUDA_VISIBLE_DEVICES=$DREAMREC_GPU
 
     for LR in "${DREAMREC_LR_LIST[@]}"; do
-        local RUN_NAME="dreamrec-yelp-lr${LR}-${RUN_TAG}"
-        local SAVE_DIR="$ROOT/DreamRec/outputs/yelp/$RUN_NAME"
+        local RUN_NAME="dreamrec-${DATASET}-lr${LR}-${RUN_TAG}"
+        local SAVE_DIR="$ROOT/DreamRec/outputs/${DATASET}/${RUN_TAG}"
         local LOG_FILE="$SAVE_DIR/train.log"
-        local TB_DIR="$ROOT/DreamRec/tensorboard/yelp/$RUN_NAME"
+        local TB_DIR="$ROOT/DreamRec/tensorboard/${DATASET}/${RUN_TAG}"
         mkdir -p "$SAVE_DIR"
 
         echo "  LR=$LR  ->  $SAVE_DIR"
         python -u "$ROOT/DreamRec/DreamRec.py" \
-            --data         yelp \
+            --data         $DATASET \
             --epoch        $DREAMREC_EPOCH \
             --batch_size   $DREAMREC_BATCH_SIZE \
             --random_seed  $DREAMREC_SEED \
@@ -262,18 +271,16 @@ train_dreamrec() {
 train_difurec() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [DiffuRec] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [DiffuRec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local DESC="difurec-yelp-${RUN_TAG}"
-    local SAVE_DIR="$ROOT/DiffuRec/outputs/yelp/$DESC"
-    local LOG_DIR="$ROOT/DiffuRec/logs"
-    local LOG_FILE="$LOG_DIR/${RUN_TAG}.log"
-    local TB_DIR="$ROOT/DiffuRec/tensorboard/yelp/$DESC"
-    mkdir -p "$LOG_DIR" "$SAVE_DIR"
+    local SAVE_DIR="$ROOT/DiffuRec/outputs/${DATASET}/${RUN_TAG}"
+    local LOG_FILE="$ROOT/DiffuRec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    local TB_DIR="$ROOT/DiffuRec/tensorboard/${DATASET}/${RUN_TAG}"
+    mkdir -p "$ROOT/DiffuRec/logs" "$SAVE_DIR"
 
     CUDA_VISIBLE_DEVICES=$DIFUREC_GPU python "$ROOT/DiffuRec/src/main.py" \
-        --dataset           yelp \
-        --data_path         "$ROOT/DiffuRec/data/yelp/dataset.pkl" \
+        --dataset           $DATASET \
+        --data_path         "$ROOT/DiffuRec/data/${DATASET}/dataset.pkl" \
         --log_file          "$ROOT/DiffuRec/log/" \
         --max_len           10 \
         --hidden_size       $DIFUREC_HIDDEN_SIZE \
@@ -293,10 +300,10 @@ train_difurec() {
         --predict_nums      "$DIFUREC_PREDICT_NUMS" \
         --candidate_multipliers "$DIFUREC_MULTIPLIERS" \
         --topk              $DIFUREC_TOPK \
-        --ddbc_data_dir     "$ROOT/DreamRec/data/yelp" \
+        --ddbc_data_dir     "$ROOT/DreamRec/data/${DATASET}" \
         --tb_log_dir        "$TB_DIR" \
         --save_dir          "$SAVE_DIR" \
-        --description       "$DESC" \
+        --description       "difurec-${DATASET}-${RUN_TAG}" \
         --random_seed       $DIFUREC_SEED \
         2>&1 | tee "$LOG_FILE"
     echo "  [DiffuRec] 完成，log: $LOG_FILE"
@@ -305,10 +312,10 @@ train_difurec() {
 train_gru4rec() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [GRU4Rec] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [GRU4Rec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local OUTPUT_DIR="$ROOT/GRU4Rec/outputs/yelp/${RUN_TAG}"
-    local LOG_FILE="$ROOT/GRU4Rec/logs/${RUN_TAG}.log"
+    local OUTPUT_DIR="$ROOT/GRU4Rec/outputs/${DATASET}/${RUN_TAG}"
+    local LOG_FILE="$ROOT/GRU4Rec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
     mkdir -p "$ROOT/GRU4Rec/logs"
 
     conda run -n DDBC python "$ROOT/GRU4Rec/train_yelp.py" \
@@ -335,47 +342,47 @@ train_gru4rec() {
 train_sasrec() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [SASRec] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [SASRec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/SASRec/logs"
-    local LOG_FILE="$LOG_DIR/${RUN_TAG}.log"
-    mkdir -p "$LOG_DIR"
+    local LOG_FILE="$ROOT/SASRec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/SASRec/logs"
 
-    CUDA_VISIBLE_DEVICES=$SASREC_GPU \
-    python "$ROOT/SASRec/python/main_disco.py" \
-        --dataset=Yelp \
-        --train_dir="${RUN_TAG}" \
-        --maxlen=$SASREC_MAXLEN \
-        --hidden_units=$SASREC_HIDDEN_UNITS \
-        --num_blocks=$SASREC_NUM_BLOCKS \
-        --num_heads=$SASREC_NUM_HEADS \
-        --dropout_rate=$SASREC_DROPOUT \
-        --batch_size=$SASREC_BATCH_SIZE \
-        --lr=$SASREC_LR \
-        --num_epochs=$SASREC_EPOCHS \
-        --eval_interval=$SASREC_EVAL_INTERVAL \
-        --patience=$SASREC_PATIENCE \
-        --ddbc_predict_nums="$SASREC_PREDICT_NUMS" \
-        --ddbc_multipliers="$SASREC_MULTIPLIERS" \
-        --ddbc_seed=$SASREC_SEED \
-        --tb_log_dir="$ROOT/SASRec/tensorboard/${RUN_TAG}" \
-        2>&1 | tee "$LOG_FILE"
+    (
+        cd "$ROOT/SASRec/python"
+        CUDA_VISIBLE_DEVICES=$SASREC_GPU python main_disco.py \
+            --dataset=$DATASET_CAP \
+            --train_dir="${DATASET}_${RUN_TAG}" \
+            --maxlen=$SASREC_MAXLEN \
+            --hidden_units=$SASREC_HIDDEN_UNITS \
+            --num_blocks=$SASREC_NUM_BLOCKS \
+            --num_heads=$SASREC_NUM_HEADS \
+            --dropout_rate=$SASREC_DROPOUT \
+            --batch_size=$SASREC_BATCH_SIZE \
+            --lr=$SASREC_LR \
+            --num_epochs=$SASREC_EPOCHS \
+            --eval_interval=$SASREC_EVAL_INTERVAL \
+            --patience=$SASREC_PATIENCE \
+            --ddbc_predict_nums="$SASREC_PREDICT_NUMS" \
+            --ddbc_multipliers="$SASREC_MULTIPLIERS" \
+            --ddbc_seed=$SASREC_SEED \
+            --item_num=20033 \
+            --tb_log_dir="$ROOT/SASRec/tensorboard/${DATASET}_${RUN_TAG}"
+    ) 2>&1 | tee "$LOG_FILE"
     echo "  [SASRec] 完成，log: $LOG_FILE"
 }
 
 train_bert4rec() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [BERT4Rec] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [BERT4Rec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/BERT4Rec/logs"
-    local LOG_FILE="$LOG_DIR/${RUN_TAG}.log"
-    mkdir -p "$LOG_DIR"
+    local LOG_FILE="$ROOT/BERT4Rec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/BERT4Rec/logs"
 
     CUDA_VISIBLE_DEVICES=$BERT4REC_GPU \
     python "$ROOT/BERT4Rec/main.py" \
         --template             train_bert_yelp \
-        --dataset_code         yelp \
+        --dataset_code         $DATASET \
         --device               cuda \
         --device_idx           $BERT4REC_GPU \
         --train_batch_size     $BERT4REC_BATCH_SIZE \
@@ -400,9 +407,9 @@ train_bert4rec() {
         --eval_freq            $BERT4REC_EVAL_FREQ \
         --patience             $BERT4REC_PATIENCE \
         --random_seed          $BERT4REC_SEED \
-        --ddbc_data_dir        "$ROOT/DreamRec/data/yelp" \
+        --ddbc_data_dir        "$ROOT/DreamRec/data/${DATASET}" \
         --experiment_dir       "$ROOT/BERT4Rec/experiments" \
-        --experiment_description "bert4rec-yelp-${RUN_TAG}" \
+        --experiment_description "bert4rec-${DATASET}-${RUN_TAG}" \
         2>&1 | tee "$LOG_FILE"
     echo "  [BERT4Rec] 完成，log: $LOG_FILE"
 }
@@ -410,45 +417,44 @@ train_bert4rec() {
 train_tiger() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [TIGER] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [TIGER] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/TIGER/logs"
-    local LOG_FILE="$LOG_DIR/${RUN_TAG}.log"
-    mkdir -p "$LOG_DIR"
+    local LOG_FILE="$ROOT/TIGER/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/TIGER/logs"
 
-    CUDA_VISIBLE_DEVICES=$TIGER_GPU \
-    python "$ROOT/TIGER/main.py" \
-        --model=TIGER \
-        --dataset=Yelp \
-        --run_id="tiger-yelp-${RUN_TAG}" \
-        --ddbc_eval=True \
-        --ddbc_predict_nums="$TIGER_PREDICT_NUMS" \
-        --ddbc_multipliers="$TIGER_MULTIPLIERS" \
-        --ddbc_seed=$TIGER_SEED \
-        --eval_interval=$TIGER_EVAL_INTERVAL \
-        --epochs=$TIGER_EPOCHS \
-        --patience=$TIGER_PATIENCE \
-        --train_batch_size=$TIGER_BATCH_SIZE \
-        --eval_batch_size=$TIGER_EVAL_BATCH_SIZE \
-        2>&1 | tee "$LOG_FILE"
+    (
+        cd "$ROOT/TIGER"
+        CUDA_VISIBLE_DEVICES=$TIGER_GPU python main.py \
+            --model=TIGER \
+            --dataset=$DATASET_CAP \
+            --run_id="tiger-${DATASET}-${RUN_TAG}" \
+            --ddbc_eval=True \
+            --ddbc_predict_nums="$TIGER_PREDICT_NUMS" \
+            --ddbc_multipliers="$TIGER_MULTIPLIERS" \
+            --ddbc_seed=$TIGER_SEED \
+            --eval_interval=$TIGER_EVAL_INTERVAL \
+            --epochs=$TIGER_EPOCHS \
+            --patience=$TIGER_PATIENCE \
+            --train_batch_size=$TIGER_BATCH_SIZE \
+            --eval_batch_size=$TIGER_EVAL_BATCH_SIZE
+    ) 2>&1 | tee "$LOG_FILE"
     echo "  [TIGER] 完成，log: $LOG_FILE"
 }
 
 train_letter() {
     echo ""
     echo "──────────────────────────────────────────────────────────────"
-    echo "  [LETTER] 开始训练  RUN_TAG=$RUN_TAG"
+    echo "  [LETTER] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local OUTPUT_DIR="$ROOT/LETTER/LETTER-TIGER/ckpt/Yelp_${RUN_TAG}"
-    local LOG_DIR="$ROOT/LETTER/logs"
-    local LOG_FILE="$LOG_DIR/${RUN_TAG}.log"
-    mkdir -p "$LOG_DIR"
+    local OUTPUT_DIR="$ROOT/LETTER/LETTER-TIGER/ckpt/${DATASET_CAP}_${RUN_TAG}"
+    local LOG_FILE="$ROOT/LETTER/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/LETTER/logs"
 
     export WANDB_DISABLED=true
     CUDA_VISIBLE_DEVICES=$LETTER_GPU \
     torchrun --nproc_per_node=1 --master_port=2315 \
         "$ROOT/LETTER/LETTER-TIGER/finetune_disco.py" \
-        --dataset Yelp \
+        --dataset $DATASET_CAP \
         --data_path "$ROOT/LETTER/data" \
         --base_model "$ROOT/LETTER/LETTER-TIGER/ckpt/TIGER" \
         --output_dir "$OUTPUT_DIR" \
@@ -481,14 +487,62 @@ SUMMARY=()
 
 for MODEL in "${MODELS[@]}"; do
     case "${MODEL,,}" in
-        disco)     train_disco    && SUMMARY+=("  disco     OK") || SUMMARY+=("  disco     FAILED") ;;
-        dreamrec)  train_dreamrec && SUMMARY+=("  dreamrec  OK") || SUMMARY+=("  dreamrec  FAILED") ;;
-        difurec|diffurec) train_difurec && SUMMARY+=("  difurec   OK") || SUMMARY+=("  difurec   FAILED") ;;
-        gru4rec)   train_gru4rec  && SUMMARY+=("  gru4rec   OK") || SUMMARY+=("  gru4rec   FAILED") ;;
-        sasrec)    train_sasrec   && SUMMARY+=("  sasrec    OK") || SUMMARY+=("  sasrec    FAILED") ;;
-        bert4rec)  train_bert4rec && SUMMARY+=("  bert4rec  OK") || SUMMARY+=("  bert4rec  FAILED") ;;
-        tiger)     train_tiger    && SUMMARY+=("  tiger     OK") || SUMMARY+=("  tiger     FAILED") ;;
-        letter)    train_letter   && SUMMARY+=("  letter    OK") || SUMMARY+=("  letter    FAILED") ;;
+        disco)
+            if train_disco; then
+                SUMMARY+=("  disco     OK")
+            else
+                SUMMARY+=("  disco     FAILED")
+            fi
+            ;;
+        dreamrec)
+            if train_dreamrec; then
+                SUMMARY+=("  dreamrec  OK")
+            else
+                SUMMARY+=("  dreamrec  FAILED")
+            fi
+            ;;
+        difurec|diffurec)
+            if train_difurec; then
+                SUMMARY+=("  difurec   OK")
+            else
+                SUMMARY+=("  difurec   FAILED")
+            fi
+            ;;
+        gru4rec)
+            if train_gru4rec; then
+                SUMMARY+=("  gru4rec   OK")
+            else
+                SUMMARY+=("  gru4rec   FAILED")
+            fi
+            ;;
+        sasrec)
+            if train_sasrec; then
+                SUMMARY+=("  sasrec    OK")
+            else
+                SUMMARY+=("  sasrec    FAILED")
+            fi
+            ;;
+        bert4rec)
+            if train_bert4rec; then
+                SUMMARY+=("  bert4rec  OK")
+            else
+                SUMMARY+=("  bert4rec  FAILED")
+            fi
+            ;;
+        tiger)
+            if train_tiger; then
+                SUMMARY+=("  tiger     OK")
+            else
+                SUMMARY+=("  tiger     FAILED")
+            fi
+            ;;
+        letter)
+            if train_letter; then
+                SUMMARY+=("  letter    OK")
+            else
+                SUMMARY+=("  letter    FAILED")
+            fi
+            ;;
         *) echo "  [WARN] 未知模型: $MODEL，跳过" ;;
     esac
 done

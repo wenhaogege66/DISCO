@@ -111,18 +111,54 @@ class Pipeline:
 
 
 
-        self.trainer.fit(train_dataloader, val_dataloader)
+        if self.config.get('mode') == 'test':
+            # test-only：跳过训练，直接加载指定 ckpt
+            ckpt_path = self.config.get('ckpt_path')
+            if not ckpt_path:
+                # auto-find: latest ckpt matching run_id in ckpt_dir
+                import glob
+                run_id = self.config.get('run_id', '')
+                ckpt_dir = self.config.get('ckpt_dir', 'ckpt/')
+                pattern = os.path.join(ckpt_dir, f'{run_id}-*.pth')
+                matches = sorted(glob.glob(pattern))
+                if matches:
+                    ckpt_path = matches[-1]
+                else:
+                    ckpt_path = self.trainer.saved_model_ckpt
+            self.log(f'[Test-only] Loading checkpoint from {ckpt_path}')
+            self.model.load_state_dict(torch.load(ckpt_path, map_location=self.config['device']))
+            self.model = self.model.to(self.config['device'])
 
-        self.accelerator.wait_for_everyone()
-        self.model = self.accelerator.unwrap_model(self.model)
-
-        self.model.load_state_dict(torch.load(self.trainer.saved_model_ckpt))
+            # DDBC evaluation
+            if self.trainer.ddbc_enabled:
+                from genrec.evaluate_ddbc import evaluate_ddbc_tiger
+                _, test_recall = evaluate_ddbc_tiger(
+                    model=self.model,
+                    tokenizer=self.tokenizer,
+                    device=self.config['device'],
+                    predict_nums=self.trainer.ddbc_predict_nums,
+                    multipliers=self.trainer.ddbc_multipliers,
+                    seed=self.trainer.ddbc_seed,
+                    split='test'
+                )
+                self.log(f'[Test-only] DDBC test recall={test_recall:.4f}')
+            else:
+                self.model, test_dataloader = self.accelerator.prepare(self.model, test_dataloader)
+                test_results = self.trainer.evaluate(test_dataloader)
+                self.log(f'Test Results: {test_results}')
+            self.trainer.end()
+            return
+        else:
+            self.trainer.fit(train_dataloader, val_dataloader)
+            self.accelerator.wait_for_everyone()
+            self.model = self.accelerator.unwrap_model(self.model)
+            self.model.load_state_dict(torch.load(self.trainer.saved_model_ckpt))
 
         self.model, test_dataloader = self.accelerator.prepare(
             self.model, test_dataloader
         )
         if self.accelerator.is_main_process:
-            self.log(f'Loaded best model checkpoint from {self.trainer.saved_model_ckpt}')
+            self.log(f'Loaded best model checkpoint')
 
         test_results = self.trainer.evaluate(test_dataloader)
 
