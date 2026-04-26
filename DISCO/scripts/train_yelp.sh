@@ -27,7 +27,7 @@ if [ -f "$RESUME_CKPT" ]; then
     model.hidden_size=64 \
     data=yelp \
     dataset=Yelp \
-    run_name=${RUN_NAME} \
+    +run_name=${RUN_NAME} \
     parameterization=subs \
     seq_len=10 \
     rq_n_codebooks=3 \
@@ -53,7 +53,7 @@ else
     model.hidden_size=64 \
     data=yelp \
     dataset=Yelp \
-    run_name=${RUN_NAME} \
+    +run_name=${RUN_NAME} \
     parameterization=subs \
     seq_len=10 \
     rq_n_codebooks=3 \

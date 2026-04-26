@@ -1,0 +1,6 @@
+metadata: sentence  # none / sentence
+split: last_out
+user_core: 5
+item_core: 5
+seq_len: 60         # truncation length; also determines cache subdir (len60 / len90 / len120)
+category: MovieLens20M
