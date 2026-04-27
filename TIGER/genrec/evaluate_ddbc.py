@@ -18,7 +18,6 @@ Data sources:
 import os
 import pickle
 import numpy as np
-import pandas as pd
 import torch
 import torch.nn.functional as F
 from collections import Counter, OrderedDict
@@ -26,10 +25,10 @@ from transformers.modeling_outputs import BaseModelOutput
 
 
 # ── Path constants ────────────────────────────────────────────────────────────
-DREAMREC_DATA_DIR = "/home/sjj/wenhao/DreamRec/data/yelp"
-DISCO_CAND_DIR    = "/home/sjj/wenhao/DISCO/datasets/Yelp"
-TIGER_CAND_DIR    = "/home/sjj/wenhao/TIGER/data/yelp"
-ITEM_NUM          = 20033   # DISCO 0-based item count
+DISCO_DATA_ROOT = "/home/sjj/wenhao/DISCO/datasets"
+TIGER_DATA_ROOT = "/home/sjj/wenhao/TIGER/data"
+DEFAULT_DDBC_DATASET = "Yelp"
+DEFAULT_ITEM_NUM = 20033
 
 
 # ── Candidate pool ────────────────────────────────────────────────────────────
@@ -202,10 +201,38 @@ def score_candidates(model, tokenizer, input_ids, attention_mask, candidate_ids_
     return scores
 
 
+def _load_eval_data_from_txt(disco_dir, split, predict_n):
+    file_split = 'valid' if split == 'val' else split
+    path = os.path.join(disco_dir, f'{file_split}.txt')
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"Evaluation txt not found: {path}")
+
+    seq_list = []
+    len_seq_list = []
+    labels_list = []
+
+    with open(path, 'r') as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            parts = [p.strip() for p in line.split(',')]
+            items = [int(x) for x in parts[1:]]
+            if len(items) <= predict_n:
+                continue
+            seq = items[:-predict_n]
+            labels = items[-predict_n:]
+            seq_list.append(seq)
+            len_seq_list.append(len(seq))
+            labels_list.append(labels)
+
+    return seq_list, len_seq_list, labels_list
+
+
 # ── Main evaluation loop ──────────────────────────────────────────────────────
 def evaluate_ddbc_tiger(model, tokenizer, device,
                         predict_nums, multipliers, seed,
-                        writer=None, epoch=None, split='val'):
+                        writer=None, epoch=None, split='val', config=None):
     """
     DDBC-compatible evaluation for TIGER.
 
@@ -216,31 +243,32 @@ def evaluate_ddbc_tiger(model, tokenizer, device,
     all_results = {}
     model.eval()
 
-    # trainer 传入 'val'，但 DreamRec 文件名用 'valid'
-    file_split = 'valid' if split == 'val' else split
+    cfg = config or {}
+    ddbc_dataset = cfg.get('ddbc_dataset', DEFAULT_DDBC_DATASET)
+    ddbc_item_num = int(cfg.get('ddbc_item_num', DEFAULT_ITEM_NUM))
+
+    disco_dir = os.path.join(DISCO_DATA_ROOT, ddbc_dataset)
+    tiger_cand_dir = os.path.join(TIGER_DATA_ROOT, ddbc_dataset.lower().replace('-', '_').replace('/', '_'))
+    os.makedirs(tiger_cand_dir, exist_ok=True)
 
     for predict_n in predict_nums:
-        data_path = os.path.join(DREAMREC_DATA_DIR, f'{file_split}_data_items{predict_n}.df')
-        eval_data    = pd.read_pickle(data_path)
-        seq_list     = list(eval_data['seq'].values)
-        len_seq_list = list(eval_data['len_seq'].values)
-        labels_list  = list(eval_data['labels'].values)
-        num_total    = len(seq_list)
+        seq_list, len_seq_list, labels_list = _load_eval_data_from_txt(disco_dir, split, predict_n)
+        num_total = len(seq_list)
 
         for multiplier in multipliers:
             if split == 'test':
                 cand_path = os.path.join(
-                    DISCO_CAND_DIR,
+                    disco_dir,
                     f'test_candidates_seed1_x{multiplier}_items{predict_n}.pkl'
                 )
             else:
                 cand_path = os.path.join(
-                    TIGER_CAND_DIR,
+                    tiger_cand_dir,
                     f'valid_candidates_seed{seed}_x{multiplier}_items{predict_n}.pkl'
                 )
 
             candidate_pool = _load_or_build_candidate_pool(
-                labels_list, ITEM_NUM, multiplier, predict_n, seed, cand_path
+                labels_list, ddbc_item_num, multiplier, predict_n, seed, cand_path
             )
 
             metric_accum = {'recall': 0., 'precision': 0.,

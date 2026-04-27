@@ -139,7 +139,8 @@ class Pipeline:
                     predict_nums=self.trainer.ddbc_predict_nums,
                     multipliers=self.trainer.ddbc_multipliers,
                     seed=self.trainer.ddbc_seed,
-                    split='test'
+                    split='test',
+                    config=self.config,
                 )
                 self.log(f'[Test-only] DDBC test recall={test_recall:.4f}')
             else:

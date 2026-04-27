@@ -167,7 +167,8 @@ class Trainer:
                         seed=self.ddbc_seed,
                         writer=self.accelerator,
                         epoch=epoch + 1,
-                        split='val'
+                        split='val',
+                        config=self.config,
                     )
                     self.log(f'[Epoch {epoch + 1}] DDBC val_recall@3_x19={val_recall:.4f}')
                     val_score = val_recall   # use DDBC recall for checkpoint selection
@@ -208,7 +209,8 @@ class Trainer:
                     seed=self.ddbc_seed,
                     writer=self.accelerator,
                     epoch=best_epoch,
-                    split='test'
+                    split='test',
+                    config=self.config,
                 )
                 self.log(f'Test DDBC recall@3_x19={test_recall:.4f}')
 

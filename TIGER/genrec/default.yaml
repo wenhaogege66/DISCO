@@ -21,3 +21,10 @@ patience: 25            # Early stopping. Stop training after n epochs without i
 topk: [5,10]
 metrics: [ndcg,recall]
 val_metric: ndcg@10
+# DDBC eval config (parameterizable across datasets)
+ddbc_eval: false
+ddbc_dataset: Yelp
+ddbc_item_num: 20033
+ddbc_predict_nums: [3, 5]
+ddbc_multipliers: [9, 19, 49, 99]
+ddbc_seed: 100
