@@ -17,16 +17,25 @@ Data sources:
 import os
 import pickle
 import numpy as np
-import pandas as pd
 import torch
 from collections import Counter, OrderedDict
 
 
-# ── Path constants ────────────────────────────────────────────────────────────
-DREAMREC_DATA_DIR = "/home/sjj/wenhao/DreamRec/data/yelp"
-DISCO_CAND_DIR    = "/home/sjj/wenhao/DISCO/datasets/Yelp"
-SASREC_CAND_DIR   = "/home/sjj/wenhao/SASRec/data/yelp"
-ITEM_NUM          = 20033   # DISCO 0-based item count
+# ── Path mapping (dataset → directories) ─────────────────────────────────────
+DATASET_PATHS = {
+    'Yelp': {
+        'dreamrec': '/home/sjj/wenhao/DreamRec/data/yelp',
+        'disco':    '/home/sjj/wenhao/DISCO/datasets/Yelp',
+        'sasrec':   '/home/sjj/wenhao/SASRec/data/yelp',
+        'item_num': 20033,
+    },
+    'MovieLens60': {
+        'dreamrec': '/home/sjj/wenhao/DreamRec/data/ml60',
+        'disco':    '/home/sjj/wenhao/DISCO/datasets/MovieLens-20M/len60',
+        'sasrec':   '/home/sjj/wenhao/SASRec/data/ml60',
+        'item_num': 17188,
+    },
+}
 
 
 # ── Candidate pool ────────────────────────────────────────────────────────────
@@ -129,7 +138,8 @@ def score_candidates(model, log_seq, candidate_ids_0based):
 # ── Main evaluation loop ──────────────────────────────────────────────────────
 def evaluate_ddbc_sasrec(model, maxlen, device,
                          predict_nums, multipliers, seed,
-                         writer=None, epoch=None, split='val'):
+                         writer=None, epoch=None, split='val',
+                         dataset='Yelp'):
     """
     DDBC-compatible evaluation for SASRec.
 
@@ -137,33 +147,40 @@ def evaluate_ddbc_sasrec(model, maxlen, device,
         all_results  : dict[(predict_n, multiplier)] -> metrics dict
         main_recall  : float, recall@3_x19 (primary checkpoint metric)
     """
+    paths = DATASET_PATHS[dataset]
+    dreamrec_dir = paths['dreamrec']
+    disco_dir    = paths['disco']
+    sasrec_dir   = paths['sasrec']
+    item_num     = paths['item_num']
+
     all_results = {}
     model.eval()
 
     file_split = 'valid' if split == 'val' else split
 
     for predict_n in predict_nums:
-        data_path = os.path.join(DREAMREC_DATA_DIR, f'{file_split}_data_items{predict_n}.df')
-        eval_data    = pd.read_pickle(data_path)
-        seq_list     = list(eval_data['seq'].values)
-        len_seq_list = list(eval_data['len_seq'].values)
-        labels_list  = list(eval_data['labels'].values)
+        data_path = os.path.join(dreamrec_dir, f'{file_split}_data_items{predict_n}.df')
+        with open(data_path, 'rb') as f:
+            eval_data = pickle.load(f)
+        seq_list     = eval_data['seq']
+        len_seq_list = eval_data['len_seq']
+        labels_list  = eval_data['labels']
         num_total    = len(seq_list)
 
         for multiplier in multipliers:
             if split == 'test':
                 cand_path = os.path.join(
-                    DISCO_CAND_DIR,
+                    disco_dir,
                     f'test_candidates_seed1_x{multiplier}_items{predict_n}.pkl'
                 )
             else:
                 cand_path = os.path.join(
-                    SASREC_CAND_DIR,
+                    sasrec_dir,
                     f'valid_candidates_seed{seed}_x{multiplier}_items{predict_n}.pkl'
                 )
 
             candidate_pool = _load_or_build_candidate_pool(
-                labels_list, ITEM_NUM, multiplier, predict_n, seed, cand_path
+                labels_list, item_num, multiplier, predict_n, seed, cand_path
             )
 
             metric_accum = {'recall': 0., 'precision': 0.,
@@ -227,7 +244,7 @@ def evaluate_ddbc_sasrec(model, maxlen, device,
 
     model.train()
 
-    main_key    = (3, 19) if (3, 19) in all_results else sorted(all_results.keys())[0]
+    main_key    = sorted(all_results.keys())[0] if all_results else (predict_nums[0], multipliers[0])
     main_metrics = all_results.get(main_key, {})
     output_results = OrderedDict([
         ('recall@1',    round(main_metrics.get('recall', 0.0), 4)),

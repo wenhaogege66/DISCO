@@ -232,7 +232,8 @@ def _load_eval_data_from_txt(disco_dir, split, predict_n):
 # ── Main evaluation loop ──────────────────────────────────────────────────────
 def evaluate_ddbc_tiger(model, tokenizer, device,
                         predict_nums, multipliers, seed,
-                        writer=None, epoch=None, split='val', config=None):
+                        writer=None, epoch=None, split='val', config=None,
+                        predict_mode='ar'):
     """
     DDBC-compatible evaluation for TIGER.
 
@@ -294,21 +295,28 @@ def evaluate_ddbc_tiger(model, tokenizer, device,
                         model, tokenizer, input_ids, attention_mask, cands, device
                     )
 
+                    # Single-pass: score once, take top-predict_n (fast, no duplicates)
                     # AR mode: predict_n steps, full candidate pool each step (allows duplicates)
-                    pred_items   = []
-                    step_hits    = []
-                    cur_valid    = list(seq[:len_seq])  # 0-based valid items
-                    for t in range(predict_n):
-                        cur_inp, cur_mask = tokenize_seq_for_eval(tokenizer, cur_valid, len(cur_valid))
-                        step_scores = score_candidates(
-                            model, tokenizer, cur_inp, cur_mask, cands, device
-                        )
-                        best_idx  = int(np.argmax(step_scores))
-                        best_item = cands[best_idx]
-                        pred_items.append(best_item)
-                        true_label = labels[t] if t < len(labels) else -1
-                        step_hits.append(1 if true_label == best_item else 0)
-                        cur_valid.append(best_item)
+                    if predict_mode == 'single':
+                        top_indices = np.argsort(scores)[-predict_n:][::-1]
+                        pred_items  = [cands[int(i)] for i in top_indices]
+                        step_hits   = [1 if t < len(labels) and labels[t] == pred_items[t] else 0
+                                       for t in range(predict_n)]
+                    else:
+                        pred_items = []
+                        step_hits  = []
+                        cur_valid  = list(seq[:len_seq])  # 0-based valid items
+                        for t in range(predict_n):
+                            cur_inp, cur_mask = tokenize_seq_for_eval(tokenizer, cur_valid, len(cur_valid))
+                            step_scores = score_candidates(
+                                model, tokenizer, cur_inp, cur_mask, cands, device
+                            )
+                            best_idx  = int(np.argmax(step_scores))
+                            best_item = cands[best_idx]
+                            pred_items.append(best_item)
+                            true_label = labels[t] if t < len(labels) else -1
+                            step_hits.append(1 if true_label == best_item else 0)
+                            cur_valid.append(best_item)
 
                     m = _seq_mode_metrics(pred_items, labels)
                     sm_metrics = _stepwise_sm_metrics(step_hits, predict_n)

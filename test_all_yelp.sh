@@ -34,9 +34,15 @@ if [ -z "${RUN_TAG:-}" ]; then
     echo "  DATASET=$DATASET RUN_TAG=exp_yelp_v1 bash test_all.sh"
     exit 1
 fi
+
+# ── 统一日志目录 ────────────────────────────────────────────────────────────
+LOG_DIR="$ROOT/logs/$DATASET"
+mkdir -p "$LOG_DIR"
+
 echo "================================================================"
 echo "  DATASET  = $DATASET"
 echo "  RUN_TAG  = $RUN_TAG"
+echo "  LOG_DIR  = $LOG_DIR"
 echo "================================================================"
 
 # ── 选择要测试的模型 ──────────────────────────────────────────────────────────
@@ -104,9 +110,7 @@ test_disco() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [DISCO] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/DISCO/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
-    mkdir -p "$LOG_DIR"
+    local LOG_FILE="$LOG_DIR/test_disco_${RUN_TAG}_${LOG_STAMP}.log"
 
     if [ -z "$DISCO_CKPT" ]; then
         echo "  [DISCO] 未指定 DISCO_CKPT，请通过环境变量 DISCO_CKPT=<path> 设置后重试"
@@ -150,10 +154,8 @@ test_dreamrec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [DreamRec] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/DreamRec/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_dreamrec_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[dreamrec]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     # DreamRec 没有独立 test 脚本，训练结束后自动在 best_model 上跑 test
     # 若需要单独重测，需手动调用 DreamRec.py --mode test（如已支持）
@@ -181,10 +183,8 @@ test_difurec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [DiffuRec] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/DiffuRec/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_difurec_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[difurec]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     local DESC="difurec-${DATASET}-${RUN_TAG}"
     local SAVE_DIR="${DIFUREC_CKPT:-$ROOT/DiffuRec/outputs/${DATASET}/${RUN_TAG}}"
@@ -217,10 +217,8 @@ test_gru4rec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [GRU4Rec] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/GRU4Rec/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_gru4rec_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[gru4rec]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     local OUTPUT_DIR="${GRU4REC_CKPT:-$ROOT/GRU4Rec/outputs/${DATASET}/${RUN_TAG}}"
 
@@ -253,10 +251,8 @@ test_sasrec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [SASRec] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/SASRec/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_sasrec_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[sasrec]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     local TRAIN_DIR="${SASREC_TRAIN_DIR:-${RUN_TAG}}"
 
@@ -284,10 +280,8 @@ test_bert4rec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [BERT4Rec] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/BERT4Rec/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_bert4rec_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[bert4rec]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     local CKPT_ARG=""
     [ -n "$BERT4REC_CKPT" ] && CKPT_ARG="--test_model_path $BERT4REC_CKPT"
@@ -323,10 +317,8 @@ test_tiger() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [TIGER] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/TIGER/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_tiger_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[tiger]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     local CKPT_ARG=""
     [ -n "$TIGER_CKPT" ] && CKPT_ARG="--ckpt_path=$TIGER_CKPT"
@@ -352,10 +344,8 @@ test_letter() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [LETTER] 开始测试  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_DIR="$ROOT/LETTER/logs"
-    local LOG_FILE="$LOG_DIR/test_${DATASET}_${RUN_TAG}_${LOG_STAMP}.log"
+    local LOG_FILE="$LOG_DIR/test_letter_${RUN_TAG}_${LOG_STAMP}.log"
     MODEL_LOG_FILES[letter]="$LOG_FILE"
-    mkdir -p "$LOG_DIR"
 
     local CKPT_DIR="${LETTER_CKPT_DIR:-$ROOT/LETTER/LETTER-TIGER/ckpt/${DATASET_CAP}_${RUN_TAG}}"
 

@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 """
-GRU4Rec baseline – Yelp, DDBC evaluation protocol.
+GRU4Rec baseline – MovieLens-60, DDBC evaluation protocol.
 
 Run from workspace root:
-    conda activate DDBC && bash GRU4Rec/scripts/train_yelp.sh
+    conda activate DDBC && bash GRU4Rec/scripts/train_ml60.sh
 
-Training data   : GRU4Rec/data/yelp/train_yelp.tsv  (auto-built from DISCO train.txt)
-Eval data       : DreamRec/data/yelp/{valid,test}_data_items{n}.df
-Test candidates : DISCO/datasets/Yelp/test_candidates_seed1_x{mult}_items{n}.pkl  (shared)
-Val  candidates : GRU4Rec/data/yelp/valid_candidates_seed100_x{mult}_items{n}.pkl (auto-cached)
+Training data   : GRU4Rec/data/ml60/train_ml60.tsv  (auto-built from DISCO train.txt)
+Eval data       : DreamRec/data/ml60/{valid,test}_data_items{n}.df
+Test candidates : DISCO/datasets/MovieLens-20M/len60/test_candidates_seed1_x{mult}_items{n}.pkl  (shared)
+Val  candidates : GRU4Rec/data/ml60/valid_candidates_seed100_x{mult}_items{n}.pkl (auto-cached)
 """
 
 import argparse
@@ -36,28 +36,29 @@ from gru4rec_pytorch import GRU4RecModel, SessionDataIterator, IndexedAdagradM
 # ---------------------------------------------------------------------------
 # Constants (must match DISCO / DreamRec)
 # ---------------------------------------------------------------------------
-ITEM_NUM  = 20033
-SEQ_SIZE  = 10
+ITEM_NUM  = 17188
+SEQ_SIZE  = 60
 PAD_TOKEN = ITEM_NUM
+
+DATASET_NAME = "ml60"
 
 
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 def parse_args():
-    p = argparse.ArgumentParser(description='GRU4Rec Yelp – DDBC eval')
+    p = argparse.ArgumentParser(description='GRU4Rec MovieLens-60 – DDBC eval')
     # Paths
-    p.add_argument('--data_dir',     default=os.path.join(SCRIPT_DIR, 'data/yelp'))
-    p.add_argument('--disco_dir',    default=os.path.join(WSPACE_DIR, 'DISCO/datasets/Yelp'))
-    p.add_argument('--dreamrec_dir', default=os.path.join(WSPACE_DIR, 'DreamRec/data/yelp'))
-    p.add_argument('--output_dir',   default=os.path.join(SCRIPT_DIR, 'outputs/yelp'))
+    p.add_argument('--data_dir',     default=os.path.join(SCRIPT_DIR, f'data/{DATASET_NAME}'))
+    p.add_argument('--disco_dir',    default=os.path.join(WSPACE_DIR, 'DISCO/datasets/MovieLens-20M/len60'))
+    p.add_argument('--dreamrec_dir', default=os.path.join(WSPACE_DIR, f'DreamRec/data/{DATASET_NAME}'))
+    p.add_argument('--output_dir',   default=os.path.join(SCRIPT_DIR, f'outputs/{DATASET_NAME}'))
     p.add_argument('--log_dir',      default=os.path.join(SCRIPT_DIR, 'tensorboard'))
-    p.add_argument('--log_file',     default=os.path.join(SCRIPT_DIR, 'logs/train_yelp.log'))
+    p.add_argument('--log_file',     default=os.path.join(SCRIPT_DIR, f'logs/train_{DATASET_NAME}.log'))
     # Model
     p.add_argument('--layers',              default='64',
-                   help='Hidden layer sizes, "/" separated. e.g. "64" or "256/128"')
-    p.add_argument('--constrained_embedding', type=int, default=1,
-                   help='1=share input/output embeddings (default), 0=separate')
+                   help='Hidden layer sizes, "/" separated.')
+    p.add_argument('--constrained_embedding', type=int, default=1)
     p.add_argument('--dropout_p_embed',  type=float, default=0.0)
     p.add_argument('--dropout_p_hidden', type=float, default=0.0)
     # Training
@@ -67,20 +68,18 @@ def parse_args():
     p.add_argument('--batch_size', type=int,   default=512)
     p.add_argument('--lr',         type=float, default=0.01)
     p.add_argument('--momentum',   type=float, default=0.0)
-    p.add_argument('--n_sample',   type=int,   default=2048,
-                   help='Negative samples per batch (0 = disable)')
+    p.add_argument('--n_sample',   type=int,   default=2048)
     p.add_argument('--sample_alpha', type=float, default=0.5)
     p.add_argument('--bpreg',      type=float, default=1.0)
     p.add_argument('--elu_param',  type=float, default=0.5)
     # Evaluation
     p.add_argument('--eval_freq',  type=int, default=5)
-    p.add_argument('--predict_nums',          default='3',
-                   help='Comma-separated predict counts, e.g. "3" or "3,5"')
+    p.add_argument('--predict_nums',          default='30',
+                   help='Comma-separated predict counts')
     p.add_argument('--candidate_multipliers', default='19',
                    help='Comma-separated multipliers')
     p.add_argument('--predict_mode', default='single', choices=['single', 'ar'])
-    p.add_argument('--topk',       type=int, default=1,
-                   help='K for SM@K per-step hit check')
+    p.add_argument('--topk',       type=int, default=1)
     p.add_argument('--val_seed',   type=int, default=100)
     # Misc
     p.add_argument('--device', default='cuda:0')
@@ -109,16 +108,8 @@ def setup_logging(log_file):
 # Data preparation
 # ---------------------------------------------------------------------------
 def prepare_train_data(disco_dir, data_dir, logger):
-    """
-    Convert DISCO train.txt → GRU4Rec session TSV.
-
-    DISCO format : bundle_id, item_0, ..., item_9
-    GRU4Rec TSV  : SessionId  ItemId  Time   (tab-separated, header row)
-
-    Each bundle becomes one session; item position is the timestamp.
-    Cached at data_dir/train_yelp.tsv.
-    """
-    tsv_path = os.path.join(data_dir, 'train_yelp.tsv')
+    """Convert DISCO train.txt → GRU4Rec session TSV. Cached at data_dir/train_ml60.tsv."""
+    tsv_path = os.path.join(data_dir, 'train_ml60.tsv')
     if os.path.exists(tsv_path):
         logger.info(f'Loading cached train TSV from {tsv_path}')
         return pd.read_csv(tsv_path, sep='\t',
@@ -131,7 +122,7 @@ def prepare_train_data(disco_dir, data_dir, logger):
         for line in f:
             parts = [int(x) for x in line.strip().split(',')]
             bundle_id = parts[0]
-            items = parts[1:]          # exactly 10 items
+            items = parts[1:]
             for t, item_id in enumerate(items):
                 records.append((bundle_id, item_id, t))
 
@@ -144,11 +135,8 @@ def prepare_train_data(disco_dir, data_dir, logger):
 
 
 def prepare_split_tsv(split, disco_dir, data_dir, logger):
-    """
-    Convert DISCO {valid,test}.txt → GRU4Rec session TSV.
-    Cached at data_dir/{split}_yelp.tsv.
-    """
-    tsv_path = os.path.join(data_dir, f'{split}_yelp.tsv')
+    """Convert DISCO {valid,test}.txt → GRU4Rec session TSV."""
+    tsv_path = os.path.join(data_dir, f'{split}_ml60.tsv')
     if os.path.exists(tsv_path):
         logger.info(f'Cached {split} TSV found: {tsv_path}')
         return
@@ -169,15 +157,13 @@ def prepare_split_tsv(split, disco_dir, data_dir, logger):
 
 
 # ---------------------------------------------------------------------------
-# Candidate pool helpers  (mirrors DreamRec._load_or_build_candidate_pool)
+# Candidate pool helpers
 # ---------------------------------------------------------------------------
-def _load_or_build_candidate_pool(eval_data, predict_n, multiplier,
+def _load_or_build_candidate_pool(labels_list, predict_n, multiplier,
                                    split, val_seed, data_dir, disco_dir, logger):
     """
     test  → load directly from DISCO shared pkl (never rebuild).
     valid → build from val labels + random negatives, cache as pkl.
-
-    Returns list[list[int]] of length len(eval_data).
     """
     if split == 'test':
         pkl = os.path.join(disco_dir,
@@ -185,22 +171,20 @@ def _load_or_build_candidate_pool(eval_data, predict_n, multiplier,
         with open(pkl, 'rb') as f:
             return pickle.load(f)['candidates']
 
-    # --- validation ---
     pkl = os.path.join(data_dir,
                        f'valid_candidates_seed{val_seed}_x{multiplier}_items{predict_n}.pkl')
     if os.path.exists(pkl):
         with open(pkl, 'rb') as f:
             data = pickle.load(f)
-            # support both bare list (old) and dict format
             return data['candidates'] if isinstance(data, dict) else data
 
     logger.info(f'Building valid candidates (predict_n={predict_n}, x{multiplier}) …')
     rng = random.Random(val_seed)
     all_items = set(range(ITEM_NUM))
     candidates = []
-    for _, row in eval_data.iterrows():
-        labels = list(row['labels'])
-        unique_labels = list(dict.fromkeys(labels))   # deduplicate, preserve order
+    for labels in labels_list:
+        labels = list(labels)
+        unique_labels = list(dict.fromkeys(labels))
         neg_pool = list(all_items - set(unique_labels))
         n_neg = predict_n * multiplier
         negs = rng.sample(neg_pool, n_neg)
@@ -208,13 +192,14 @@ def _load_or_build_candidate_pool(eval_data, predict_n, multiplier,
 
     os.makedirs(data_dir, exist_ok=True)
     with open(pkl, 'wb') as f:
-        pickle.dump(candidates, f)
+        pickle.dump({'candidates': candidates, 'metadata': {
+            'seed': val_seed, 'multiplier': multiplier, 'predict_num_items': predict_n}}, f)
     logger.info(f'Cached → {pkl}')
     return candidates
 
 
 # ---------------------------------------------------------------------------
-# Metric helpers  (identical to DreamRec)
+# Metric helpers
 # ---------------------------------------------------------------------------
 def _seq_mode_metrics(pred_items, label_list):
     """Counter-based recall / precision / hit_j / hit_full."""
@@ -230,7 +215,6 @@ def _seq_mode_metrics(pred_items, label_list):
     hits = {f'hit_{j}': int(inter >= j) for j in range(1, 6)}
     hits['hit_full'] = int(pred_c == label_c)
 
-    # SM: Counter-based (handles duplicate labels)
     sh = sum(min(pred_c[k], label_c[k]) for k in label_c)
     sm = sh / n_label if n_label > 0 else 0.0
 
@@ -249,22 +233,14 @@ def _stepwise_sm_metrics(step_hits):
 # ---------------------------------------------------------------------------
 @torch.no_grad()
 def _build_hidden(model, seq_batch, history_n, device):
-    """
-    Feed seq_batch[:, :history_n] step-by-step through GRU.
-
-    seq_batch : LongTensor [B, SEQ_SIZE]
-    history_n : int  (7 for items3, 5 for items5)
-    Returns   : H  (list of tensors, H[-1] is the final hidden state [B, hidden])
-    """
     B = seq_batch.shape[0]
     H = [torch.zeros(B, model.layers[i], device=device)
          for i in range(len(model.layers))]
 
     for t in range(history_n):
-        items_t = seq_batch[:, t]                  # [B]
-        # Constrained embedding: input embedding = Wy lookup
-        E = model.Wy(items_t)                      # [B, hidden]
-        model.hidden_step(E, H, training=False)    # updates H in-place
+        items_t = seq_batch[:, t]
+        E = model.Wy(items_t)
+        model.hidden_step(E, H, training=False)
 
     return H
 
@@ -279,11 +255,6 @@ def evaluate_ddbc(model, device,
                   writer=None, epoch=None, split='test',
                   predict_mode='single', topk=1,
                   eval_batch_size=512, logger=None):
-    """
-    DDBC-compatible evaluation for GRU4Rec.
-
-    Returns dict of all metrics; primary metric = val_recall@3_x9.
-    """
     if logger is None:
         logger = logging.getLogger(__name__)
 
@@ -292,19 +263,22 @@ def evaluate_ddbc(model, device,
     primary = None
 
     for predict_n in predict_nums:
-        history_n = SEQ_SIZE - predict_n          # 7 or 5
+        history_n = SEQ_SIZE - predict_n
 
         eval_path = os.path.join(dreamrec_dir, f'{split}_data_items{predict_n}.df')
-        eval_data = pd.read_pickle(eval_path)
-        n_samples = len(eval_data)
+        with open(eval_path, 'rb') as f:
+            eval_dict = pickle.load(f)
+        seqs_all     = eval_dict['seq']
+        len_seqs_all = eval_dict['len_seq']
+        labels_all   = eval_dict['labels']
+        n_samples    = len(seqs_all)
 
         for multiplier in multipliers:
             candidates = _load_or_build_candidate_pool(
-                eval_data, predict_n, multiplier,
+                labels_all, predict_n, multiplier,
                 split, val_seed, data_dir, disco_dir, logger
             )
 
-            # Accumulators
             total_recall = total_precision = total_sm = 0.0
             total_hits   = {f'hit_{j}': 0 for j in range(1, 6)}
             total_hits['hit_full'] = 0
@@ -312,32 +286,28 @@ def evaluate_ddbc(model, device,
 
             for start in range(0, n_samples, eval_batch_size):
                 end   = min(start + eval_batch_size, n_samples)
-                batch = eval_data.iloc[start:end]
                 b     = end - start
 
+                batch_seqs   = seqs_all[start:end]
+                batch_labels = labels_all[start:end]
                 seqs   = torch.tensor(
-                    np.stack(batch['seq'].values), dtype=torch.long, device=device)
-                labels_list  = batch['labels'].values
+                    np.stack(batch_seqs), dtype=torch.long, device=device)
+                labels_list  = batch_labels
                 batch_cands  = candidates[start:end]
 
-                # Build GRU hidden state from input history
                 H = _build_hidden(model, seqs, history_n, device)
-                # H[-1]: [b, hidden]
 
                 if predict_mode == 'single':
-                    # ---- single-shot: score all candidates, take top-predict_n ----
                     preds_batch, step_hits_batch = _single_predict(
                         model, H[-1], batch_cands, predict_n, topk,
                         labels_list, device
                     )
                 else:
-                    # ---- AR: predict one item at a time, feed back ----
                     preds_batch, step_hits_batch = _ar_predict(
                         model, H, batch_cands, predict_n, topk,
                         labels_list, device
                     )
 
-                # Accumulate metrics
                 for i in range(b):
                     r, pr, hits, sm = _seq_mode_metrics(preds_batch[i], list(labels_list[i]))
                     total_recall    += r
@@ -349,7 +319,6 @@ def evaluate_ddbc(model, device,
                     total_sh += sm_metrics['sh']
                     total_sn += sm_metrics['sn']
 
-            # Average
             tag = f'{split}_recall@{predict_n}_x{multiplier}'
             metrics = {
                 f'{split}_recall@{predict_n}_x{multiplier}':    total_recall    / n_samples,
@@ -366,7 +335,6 @@ def evaluate_ddbc(model, device,
 
             all_metrics.update(metrics)
 
-            # Log
             r_val = metrics[f'{split}_recall@{predict_n}_x{multiplier}']
             p_val = metrics[f'{split}_precision@{predict_n}_x{multiplier}']
             logger.info(
@@ -379,7 +347,6 @@ def evaluate_ddbc(model, device,
                 for k, v in metrics.items():
                     writer.add_scalar(k, v, epoch)
 
-            # Primary metric: first (predict_n, multiplier) from config
             if split == 'valid' and predict_n == predict_nums[0] and multiplier == multipliers[0]:
                 primary = r_val
 
@@ -403,8 +370,7 @@ def evaluate_ddbc(model, device,
             ('sn@1',        round(all_metrics.get(f'test_sn{sfx}', 0.0), 4)),
         ])
         print(f'output_results {output}')
-        if logger is not None:
-            logger.info(f'output_results {output}')
+        logger.info(f'output_results {output}')
 
     return all_metrics, primary
 
@@ -414,13 +380,6 @@ def evaluate_ddbc(model, device,
 # ---------------------------------------------------------------------------
 @torch.no_grad()
 def _score_candidates(model, h_batch, batch_cands, device):
-    """
-    Score each sample's candidates using its GRU hidden state.
-
-    h_batch    : [B, hidden]
-    batch_cands: list[list[int]], length B
-    Returns    : scores [B, max_n_cands], cand_tensor [B, max_n_cands]
-    """
     B = h_batch.shape[0]
     max_n = max(len(c) for c in batch_cands)
 
@@ -428,14 +387,11 @@ def _score_candidates(model, h_batch, batch_cands, device):
     for i, c in enumerate(batch_cands):
         cand_tensor[i, :len(c)] = torch.tensor(c, dtype=torch.long, device=device)
 
-    O = model.Wy(cand_tensor)   # [B, max_n, hidden]
-    B_bias = model.By(cand_tensor)  # [B, max_n, 1]
+    O = model.Wy(cand_tensor)
+    B_bias = model.By(cand_tensor)
 
-    # scores[i,j] = h_batch[i] · O[i,j] + B_bias[i,j]
     scores = torch.bmm(O, h_batch.unsqueeze(-1)).squeeze(-1) + B_bias.squeeze(-1)
-    # [B, max_n]
 
-    # Mask padding positions
     for i, c in enumerate(batch_cands):
         if len(c) < max_n:
             scores[i, len(c):] = float('-inf')
@@ -446,7 +402,7 @@ def _score_candidates(model, h_batch, batch_cands, device):
 def _single_predict(model, h_batch, batch_cands, predict_n, topk, labels_list, device):
     """Single-shot: score all candidates once, take top-predict_n."""
     scores, cand_tensor = _score_candidates(model, h_batch, batch_cands, device)
-    top_indices = scores.topk(predict_n, dim=1).indices  # [B, predict_n]
+    top_indices = scores.topk(predict_n, dim=1).indices
 
     preds_batch     = []
     step_hits_batch = []
@@ -455,7 +411,6 @@ def _single_predict(model, h_batch, batch_cands, predict_n, topk, labels_list, d
         pred_items = [int(cand_tensor[i, j].item()) for j in top_indices[i]]
         preds_batch.append(pred_items)
 
-        # SM@topk: check each label against top-topk predictions
         top_topk = set(int(cand_tensor[i, j].item())
                        for j in scores[i].topk(min(topk, scores.shape[1])).indices)
         step_hits = [int(lbl in top_topk) for lbl in labels_list[i]]
@@ -465,32 +420,25 @@ def _single_predict(model, h_batch, batch_cands, predict_n, topk, labels_list, d
 
 
 def _ar_predict(model, H, batch_cands, predict_n, topk, labels_list, device):
-    """
-    Autoregressive: predict one item at a time, feed back into GRU.
-    H is modified in-place (each sample's hidden state evolves independently).
-    """
+    """Autoregressive: predict one item at a time, feed back into GRU."""
     B = H[-1].shape[0]
-    remaining = [list(c) for c in batch_cands]   # mutable copy per sample
+    remaining = [list(c) for c in batch_cands]
     preds_batch     = [[] for _ in range(B)]
     step_hits_batch = [[] for _ in range(B)]
 
     for step in range(predict_n):
-        # Score remaining candidates for each sample
         scores, cand_tensor = _score_candidates(model, H[-1], remaining, device)
 
         for i in range(B):
-            # Top-1 prediction
             best_local = int(scores[i].argmax().item())
             best_item  = int(cand_tensor[i, best_local].item())
             preds_batch[i].append(best_item)
 
-            # SM@topk hit check
             top_topk_local = scores[i].topk(min(topk, scores[i].shape[0])).indices
             top_topk_items = {int(cand_tensor[i, j].item()) for j in top_topk_local}
             true_label = list(labels_list[i])[step] if step < len(labels_list[i]) else -1
             step_hits_batch[i].append(int(true_label in top_topk_items))
 
-        # Feed predicted items back into GRU to update hidden states
         pred_items_t = torch.tensor(
             [preds_batch[i][-1] for i in range(B)], dtype=torch.long, device=device)
         E = model.Wy(pred_items_t)
@@ -504,7 +452,6 @@ def _ar_predict(model, H, batch_cands, predict_n, topk, labels_list, device):
 # ---------------------------------------------------------------------------
 def train_one_epoch(model, data_iterator, loss_fn, optimizer,
                     layers, batch_size, n_sample, device, logger):
-    """One full pass over training data. Returns average loss."""
     model.train()
     H = [torch.zeros(batch_size, layers[i], device=device)
          for i in range(len(layers))]
@@ -548,7 +495,6 @@ def train_one_epoch(model, data_iterator, loss_fn, optimizer,
 def main():
     args = parse_args()
 
-    # Reproducibility
     random.seed(args.seed)
     np.random.seed(args.seed)
     torch.manual_seed(args.seed)
@@ -562,7 +508,6 @@ def main():
     device = torch.device(args.device if torch.cuda.is_available() else 'cpu')
     logger.info(f'Device: {device}')
 
-    # Parse list args
     layers       = [int(x) for x in args.layers.split('/')]
     predict_nums = [int(x) for x in args.predict_nums.split(',')]
     multipliers  = [int(x) for x in args.candidate_multipliers.split(',')]
@@ -573,15 +518,9 @@ def main():
     prepare_split_tsv('valid', args.disco_dir, args.data_dir, logger)
     prepare_split_tsv('test',  args.disco_dir, args.data_dir, logger)
 
-    # Identity item-ID map: internal index == original item ID.
-    # Must only contain items that appear in train_df; SessionDataIterator's
-    # negative-sampling distribution is built from train counts and will
-    # KeyError on items absent from training data.
-    # Items unseen in train (valid/test-only) are excluded here — the model
-    # embedding table still has ITEM_NUM rows so eval candidate lookup works.
     train_item_ids = np.sort(train_df['ItemId'].unique()).astype('int32')
     identity_map = pd.Series(
-        data=train_item_ids,          # internal idx == item ID (identity)
+        data=train_item_ids,
         index=train_item_ids,
         name='ItemIdx'
     )
@@ -609,7 +548,6 @@ def main():
     ).to(device)
     logger.info(f'Model: layers={layers}, constrained_embedding={constrained}')
 
-    # Loss function (reuse GRU4Rec wrapper)
     _wrapper = _GRU4RecWrapper(
         device=device, loss=args.loss,
         bpreg=args.bpreg, elu_param=args.elu_param,
@@ -645,18 +583,16 @@ def main():
         if epoch % args.eval_freq == 0:
             logger.info(f'--- Evaluating epoch {epoch} ---')
 
-            # Validation
             val_metrics, val_recall = evaluate_ddbc(
                 model, device,
                 predict_nums, multipliers, args.val_seed,
                 args.data_dir, args.disco_dir, args.dreamrec_dir,
                 writer=writer, epoch=epoch, split='valid',
-                predict_mode='single',   # always single for validation (fast)
+                predict_mode='single',
                 topk=args.topk,
                 logger=logger,
             )
 
-            # Test
             evaluate_ddbc(
                 model, device,
                 predict_nums, multipliers, args.val_seed,
@@ -667,7 +603,6 @@ def main():
                 logger=logger,
             )
 
-            # Save best checkpoint
             if val_recall is not None and val_recall > best_val_recall:
                 best_val_recall = val_recall
                 best_epoch      = epoch
@@ -679,11 +614,11 @@ def main():
                     'args':       vars(args),
                 }, ckpt_path)
                 logger.info(
-                    f'*** New best val_recall@3_x19={val_recall:.4f} '
+                    f'*** New best val_recall@30_x19={val_recall:.4f} '
                     f'at epoch {epoch} → saved to {ckpt_path}'
                 )
 
-    logger.info(f'Training done. Best val_recall@3_x19={best_val_recall:.4f} at epoch {best_epoch}.')
+    logger.info(f'Training done. Best val_recall@30_x19={best_val_recall:.4f} at epoch {best_epoch}.')
 
     # ---- Final test evaluation with best checkpoint ----
     logger.info('=== Final test evaluation (best checkpoint) ===')

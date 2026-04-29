@@ -52,6 +52,8 @@ class Trainer:
         self.ddbc_predict_nums = self.config.get('ddbc_predict_nums', [3, 5])
         self.ddbc_multipliers  = self.config.get('ddbc_multipliers', [9, 19, 49, 99])
         self.ddbc_seed         = self.config.get('ddbc_seed', 100)
+        self.ddbc_predict_mode = self.config.get('ddbc_predict_mode', 'ar')
+        self.eval_start_epoch  = self.config.get('eval_start_epoch', 0)
 
         self.saved_model_ckpt = os.path.join(
             self.config['ckpt_dir'],
@@ -142,7 +144,8 @@ class Trainer:
 
 
 
-            if (epoch + 1) % self.config['eval_interval'] == 0:
+            if (epoch + 1) >= self.eval_start_epoch and \
+               (epoch + 1 - self.eval_start_epoch) % self.config['eval_interval'] == 0:
 
                 # ── Standard NDCG/Recall eval (kept) ──────────────────────
                 all_results = self.evaluate(val_dataloader, split='val')
@@ -169,6 +172,7 @@ class Trainer:
                         epoch=epoch + 1,
                         split='val',
                         config=self.config,
+                        predict_mode=self.ddbc_predict_mode,
                     )
                     self.log(f'[Epoch {epoch + 1}] DDBC val_recall@3_x19={val_recall:.4f}')
                     val_score = val_recall   # use DDBC recall for checkpoint selection
@@ -211,6 +215,7 @@ class Trainer:
                     epoch=best_epoch,
                     split='test',
                     config=self.config,
+                    predict_mode='ar',
                 )
                 self.log(f'Test DDBC recall@3_x19={test_recall:.4f}')
 

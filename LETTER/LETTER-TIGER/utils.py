@@ -68,6 +68,12 @@ def parse_train_args(parser):
     parser.add_argument("--lr_scheduler_type", type=str, default="cosine")
     parser.add_argument("--save_and_eval_strategy", type=str, default="epoch")
     parser.add_argument("--save_and_eval_steps", type=int, default=1000)
+    parser.add_argument("--eval_start_epoch", type=int, default=0,
+                        help="Skip DDBC eval before this epoch")
+    parser.add_argument("--eval_interval", type=int, default=1,
+                        help="Run DDBC eval every N eval calls (only effective with eval_start_epoch)")
+    parser.add_argument("--predict_mode", type=str, default="ar",
+                        help="Prediction mode: 'single' (fast, no duplicates) or 'ar' (allows duplicates)")
     parser.add_argument("--fp16",  action="store_true", default=False)
     parser.add_argument("--bf16", action="store_true", default=False)
     parser.add_argument("--deepspeed", type=str, default="./config/ds_z3_bf16.json")

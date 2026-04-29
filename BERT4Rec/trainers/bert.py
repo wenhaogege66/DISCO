@@ -19,8 +19,18 @@ from utils import AverageMeterSet
 from .utils import recalls_and_ndcgs_for_ks
 
 
-DDBC_CAND_DIR   = "/home/sjj/wenhao/DISCO/datasets/Yelp"
-DREAMREC_DATA_DIR = "/home/sjj/wenhao/DreamRec/data/yelp"
+DATASET_PATHS = {
+    'yelp': {
+        'disco_cand': '/home/sjj/wenhao/DISCO/datasets/Yelp',
+        'dreamrec':  '/home/sjj/wenhao/DreamRec/data/yelp',
+    },
+    'ml60': {
+        'disco_cand': '/home/sjj/wenhao/DISCO/datasets/MovieLens-20M/len60',
+        'dreamrec':  '/home/sjj/wenhao/DreamRec/data/ml60',
+    },
+}
+
+DREAMREC_DATA_DIR = "/home/sjj/wenhao/DreamRec/data/yelp"  # fallback
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -92,7 +102,8 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
     Test candidates: DISCO/datasets/Yelp/test_candidates_seed1_x{mult}_items{n}.pkl (0-based).
     """
     if ddbc_data_dir is None:
-        ddbc_data_dir = DREAMREC_DATA_DIR
+        ddbc_data_dir = DATASET_PATHS.get(args.dataset_code, DATASET_PATHS['yelp'])['dreamrec']
+    disco_cand_dir = DATASET_PATHS.get(args.dataset_code, DATASET_PATHS['yelp'])['disco_cand']
     device    = args.device
     item_num  = args.item_num_0based   # 20033, 0-based space for candidates
     batch_size = 100
@@ -102,17 +113,18 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
 
     for predict_n in predict_nums:
         data_path = os.path.join(ddbc_data_dir, f'{split}_data_items{predict_n}.df')
-        eval_data    = pd.read_pickle(data_path)
-        # seq is in DreamRec format: 0-based IDs padded with PAD=item_num(20033)
-        seq_list     = list(eval_data['seq'].values)
-        len_seq_list = list(eval_data['len_seq'].values)
-        labels_list  = list(eval_data['labels'].values)   # 0-based
+        with open(data_path, 'rb') as f:
+            eval_dict = pickle.load(f)
+        # eval_dict is a plain dict: {'seq': [...], 'len_seq': [...], 'labels': [...]}
+        seq_list     = eval_dict['seq']
+        len_seq_list = eval_dict['len_seq']
+        labels_list  = eval_dict['labels']
         num_total    = len(seq_list)
 
         for multiplier in multipliers:
             if split == 'test':
                 cand_path = os.path.join(
-                    DDBC_CAND_DIR,
+                    disco_cand_dir,
                     f'test_candidates_seed1_x{multiplier}_items{predict_n}.pkl'
                 )
             else:

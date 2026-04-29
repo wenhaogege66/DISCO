@@ -52,6 +52,55 @@ def set_template(args):
         args.ddbc_data_dir          = '/home/sjj/wenhao/DreamRec/data/yelp'
         return
 
+    elif args.template == 'train_bert_ml60':
+        if args.mode != 'test':
+            args.mode = 'train'
+        args.dataset_code = 'ml60'
+
+        args.dataloader_code = 'bert'
+        args.train_batch_size = 256
+        args.val_batch_size   = 256
+        args.test_batch_size  = 256
+
+        args.train_negative_sampler_code  = 'random'
+        args.train_negative_sample_size   = 0
+        args.train_negative_sampling_seed = 0
+        args.test_negative_sampler_code   = 'random'
+        args.test_negative_sample_size    = 0
+        args.test_negative_sampling_seed  = 0
+
+        args.trainer_code = 'bert'
+        args.device = 'cuda'
+        args.num_gpu = 1
+        args.optimizer = 'Adam'
+        args.lr = 0.001
+        args.weight_decay = 0
+        args.enable_lr_schedule = True
+        args.decay_step = 25
+        args.gamma = 1.0
+        args.num_epochs = 200
+        args.metric_ks  = [10, 20, 50]
+        args.best_metric = 'NDCG@10'
+
+        args.model_code      = 'bert'
+        args.model_init_seed = 0
+        args.bert_dropout      = 0.1
+        args.bert_hidden_units = 64
+        args.bert_mask_prob    = 0.15
+        args.bert_max_len      = 60
+        args.bert_num_blocks   = 2
+        args.bert_num_heads    = 4
+
+        # DDBC eval — ML-60: predict 30 items, 19x candidates
+        args.predict_nums           = '30'
+        args.candidate_multipliers  = '19'
+        args.topk                   = 1
+        args.eval_freq              = 5
+        args.patience               = 10
+        args.random_seed            = 100
+        args.ddbc_data_dir          = '/home/sjj/wenhao/DreamRec/data/ml60'
+        return
+
     elif args.template.startswith('train_bert'):
         args.mode = 'train'
 

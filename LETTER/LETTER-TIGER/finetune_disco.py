@@ -37,13 +37,18 @@ class DDBCEvalCallback(TrainerCallback):
     """
 
     def __init__(self, tokenizer, item2token_ids, device,
-                 predict_nums, multipliers, seed):
-        self.tokenizer      = tokenizer
-        self.item2token_ids = item2token_ids
-        self.device         = device
-        self.predict_nums   = predict_nums
-        self.multipliers    = multipliers
-        self.seed           = seed
+                 predict_nums, multipliers, seed,
+                 eval_start_epoch=0, eval_interval=1, predict_mode='ar'):
+        self.tokenizer        = tokenizer
+        self.item2token_ids   = item2token_ids
+        self.device           = device
+        self.predict_nums     = predict_nums
+        self.multipliers      = multipliers
+        self.seed             = seed
+        self.eval_start_epoch = eval_start_epoch
+        self.eval_interval    = eval_interval
+        self.predict_mode     = predict_mode
+        self._eval_call_count = 0
 
     def on_evaluate(self, args, state, control, model=None, metrics=None, **kwargs):
         if model is None:
@@ -52,12 +57,22 @@ class DDBCEvalCallback(TrainerCallback):
         if args.local_rank not in (-1, 0):
             return
 
+        current_epoch = int(state.epoch) if state.epoch is not None else 0
+
+        if current_epoch < self.eval_start_epoch:
+            return
+
+        self._eval_call_count += 1
+        if (self._eval_call_count - 1) % self.eval_interval != 0:
+            return
+
         _, val_recall = evaluate_ddbc_letter(
             model, self.tokenizer, self.item2token_ids, self.device,
             predict_nums=self.predict_nums,
             multipliers=self.multipliers,
             seed=self.seed,
             split='val',
+            predict_mode=self.predict_mode,
         )
 
         # Inject into metrics dict so Trainer's best-model selection sees it.
@@ -104,12 +119,15 @@ def train(args):
     model.to(device)
 
     ddbc_callback = DDBCEvalCallback(
-        tokenizer      = tokenizer,
-        item2token_ids = item2token_ids,
-        device         = device,
-        predict_nums   = args.ddbc_predict_nums,
-        multipliers    = args.ddbc_multipliers,
-        seed           = args.ddbc_seed,
+        tokenizer        = tokenizer,
+        item2token_ids   = item2token_ids,
+        device           = device,
+        predict_nums     = args.ddbc_predict_nums,
+        multipliers      = args.ddbc_multipliers,
+        seed             = args.ddbc_seed,
+        eval_start_epoch = args.eval_start_epoch,
+        eval_interval    = args.eval_interval,
+        predict_mode     = args.predict_mode,
     )
 
     trainer = Trainer(
@@ -165,6 +183,7 @@ def train(args):
             multipliers  = args.ddbc_multipliers,
             seed         = args.ddbc_seed,
             split        = 'test',
+            predict_mode = 'ar',
         )
 
 

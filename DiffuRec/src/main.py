@@ -46,8 +46,11 @@ parser.add_argument('--lambda_uncertainty', type=float, default=0.001, help='unc
 parser.add_argument('--noise_schedule', default='trunc_lin', help='Beta generation')
 parser.add_argument('--rescale_timesteps', default=True, help='rescal timesteps')
 parser.add_argument('--eval_interval', type=int, default=20, help='the number of epoch to eval')
+parser.add_argument('--eval_start_epoch', type=int, default=0, help='Skip eval before this epoch')
 parser.add_argument('--patience', type=int, default=5, help='the number of epoch to wait before early stop')
 parser.add_argument('--description', type=str, default='DiffuRec_yelp', help='Model brief introduction')
+parser.add_argument('--predict_mode', type=str, default='ar', choices=['single', 'ar'],
+                    help='single: score once, take top-N (fast); ar: step-by-step (allows duplicates)')
 # DDBC-aligned evaluation arguments
 parser.add_argument('--predict_nums', type=str, default='3,5', help='Comma-sep predict_n values, e.g. "3,5"')
 parser.add_argument('--candidate_multipliers', type=str, default='9,19,49,99', help='Comma-sep multipliers')
@@ -167,7 +170,8 @@ def main(args):
         predict_nums = [int(x) for x in args.predict_nums.split(',')]
         multipliers  = [int(x) for x in args.candidate_multipliers.split(',')]
         evaluate_ddbc(model, args, predict_nums, multipliers, args.random_seed,
-                      split='test', topk=args.topk, ddbc_data_dir=args.ddbc_data_dir)
+                      split='test', topk=args.topk, ddbc_data_dir=args.ddbc_data_dir,
+                      predict_mode='ar')
         return
 
     tra_data      = Data_Train(data_raw['train'], args)

@@ -14,6 +14,17 @@ from collections import Counter, OrderedDict
 DDBC_CAND_DIR = "/home/sjj/wenhao/DISCO/datasets/Yelp"
 DREAMREC_DATA_DIR = "/home/sjj/wenhao/DreamRec/data/yelp"
 
+DATASET_PATHS = {
+    'yelp': {
+        'disco_cand': '/home/sjj/wenhao/DISCO/datasets/Yelp',
+        'dreamrec':   '/home/sjj/wenhao/DreamRec/data/yelp',
+    },
+    'ml60': {
+        'disco_cand': '/home/sjj/wenhao/DISCO/datasets/MovieLens-20M/len60',
+        'dreamrec':   '/home/sjj/wenhao/DreamRec/data/ml60',
+    },
+}
+
 
 def optimizers(model, args):
     if args.optimizer.lower() == 'adam':
@@ -118,7 +129,7 @@ def _stepwise_sm_metrics(step_hits, predict_n):
 
 def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
                   writer=None, epoch=None, split='test', topk=1,
-                  ddbc_data_dir=None):
+                  ddbc_data_dir=None, predict_mode='ar'):
     """
     DDBC-aligned multi-item evaluation for DiffuRec.
 
@@ -128,7 +139,8 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
       - valid : DiffuRec/data/yelp/valid_candidates_seed{seed}_x{mult}_items{n}.pkl (auto-built)
     """
     if ddbc_data_dir is None:
-        ddbc_data_dir = DREAMREC_DATA_DIR
+        ddbc_data_dir = DATASET_PATHS.get(args.dataset, DATASET_PATHS['yelp'])['dreamrec']
+    disco_cand_dir = DATASET_PATHS.get(args.dataset, DATASET_PATHS['yelp'])['disco_cand']
     device = args.device
     item_num = args.item_num
     batch_size = 100
@@ -136,22 +148,22 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
 
     for predict_n in predict_nums:
         data_path = os.path.join(ddbc_data_dir, f'{split}_data_items{predict_n}.df')
-        eval_data = pd.read_pickle(data_path)
-        seq_list    = list(eval_data['seq'].values)
-        len_seq_list = list(eval_data['len_seq'].values)
-        labels_list  = list(eval_data['labels'].values)
+        with open(data_path, 'rb') as f:
+            eval_data = pickle.load(f)
+        seq_list    = eval_data['seq']
+        len_seq_list = eval_data['len_seq']
+        labels_list  = eval_data['labels']
         num_total = len(seq_list)
 
         for multiplier in multipliers:
             if split == 'test':
                 cand_path = os.path.join(
-                    DDBC_CAND_DIR,
+                    disco_cand_dir,
                     f'test_candidates_seed1_x{multiplier}_items{predict_n}.pkl'
                 )
             else:
-                cand_dir = os.path.join(os.path.dirname(ddbc_data_dir), 'yelp')
                 cand_path = os.path.join(
-                    cand_dir,
+                    ddbc_data_dir,
                     f'valid_candidates_seed{seed}_x{multiplier}_items{predict_n}.pkl'
                 )
 
@@ -177,27 +189,45 @@ def evaluate_ddbc(model, args, predict_nums, multipliers, seed,
                     preds_batch = [[] for _ in range(B)]
                     step_hits_batch = [[] for _ in range(B)]
 
-                    # AR mode: predict_n steps, full candidate pool each step (allows duplicates)
-                    for t in range(predict_n):
+                    if predict_mode == 'single':
+                        # Single-pass: score once, take top-predict_n (fast, no duplicates)
                         states = torch.LongTensor(np.array(cur_seqs)).to(device)
-
                         max_cand_len = max(len(c) for c in cands_b)
                         padded_cands = [c + [0] * (max_cand_len - len(c)) for c in cands_b]
                         cand_ids = torch.LongTensor(np.array(padded_cands)).to(device)
-
                         scores_np = model.predict_ddbc(states, candidate_ids=cand_ids).detach().cpu().numpy()
 
                         for j in range(B):
                             actual_len = len(cands_b[j])
                             if actual_len < max_cand_len:
                                 scores_np[j, actual_len:] = -np.inf
-                            best_idx  = int(np.argmax(scores_np[j]))
-                            best_item = cands_b[j][best_idx]
-                            preds_batch[j].append(best_item)
-                            true_label = list(labels_list[s.start + j])[t] if t < len(labels_list[s.start + j]) else -1
-                            step_hits_batch[j].append(1 if true_label == best_item else 0)
-                            # Shift sequence left, append predicted item
-                            cur_seqs[j] = cur_seqs[j][1:] + [best_item]
+                            top_indices = np.argsort(scores_np[j])[::-1][:predict_n]
+                            preds_batch[j] = [cands_b[j][idx] for idx in top_indices]
+                            label_items = list(labels_list[s.start + j])
+                            step_hits_batch[j] = [1 if t < len(label_items) and label_items[t] == preds_batch[j][t] else 0
+                                                   for t in range(predict_n)]
+                    else:
+                        # AR mode: predict_n steps, full candidate pool each step (allows duplicates)
+                        for t in range(predict_n):
+                            states = torch.LongTensor(np.array(cur_seqs)).to(device)
+
+                            max_cand_len = max(len(c) for c in cands_b)
+                            padded_cands = [c + [0] * (max_cand_len - len(c)) for c in cands_b]
+                            cand_ids = torch.LongTensor(np.array(padded_cands)).to(device)
+
+                            scores_np = model.predict_ddbc(states, candidate_ids=cand_ids).detach().cpu().numpy()
+
+                            for j in range(B):
+                                actual_len = len(cands_b[j])
+                                if actual_len < max_cand_len:
+                                    scores_np[j, actual_len:] = -np.inf
+                                best_idx  = int(np.argmax(scores_np[j]))
+                                best_item = cands_b[j][best_idx]
+                                preds_batch[j].append(best_item)
+                                true_label = list(labels_list[s.start + j])[t] if t < len(labels_list[s.start + j]) else -1
+                                step_hits_batch[j].append(1 if true_label == best_item else 0)
+                                # Shift sequence left, append predicted item
+                                cur_seqs[j] = cur_seqs[j][1:] + [best_item]
 
                     for j in range(B):
                         pred_items  = preds_batch[j]
@@ -282,10 +312,12 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
     lr_scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=args.decay_step, gamma=args.gamma)
 
     # DDBC eval params
-    predict_nums  = [int(x) for x in args.predict_nums.split(',')]
-    multipliers   = [int(x) for x in args.candidate_multipliers.split(',')]
-    eval_seed     = args.random_seed
-    ddbc_data_dir = args.ddbc_data_dir
+    predict_nums    = [int(x) for x in args.predict_nums.split(',')]
+    multipliers     = [int(x) for x in args.candidate_multipliers.split(',')]
+    eval_seed       = args.random_seed
+    ddbc_data_dir   = args.ddbc_data_dir
+    predict_mode    = getattr(args, 'predict_mode', 'ar')
+    eval_start_epoch = getattr(args, 'eval_start_epoch', 0)
 
     # TensorBoard
     writer = None
@@ -323,7 +355,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
             writer.add_scalar('train/loss', loss_all.item(), epoch_temp)
         lr_scheduler.step()
 
-        if epoch_temp != 0 and epoch_temp % args.eval_interval == 0:
+        if epoch_temp != 0 and epoch_temp % args.eval_interval == 0 \
+               and epoch_temp >= eval_start_epoch:
             print('start predicting: ', datetime.datetime.now())
             logger.info('start predicting: {}'.format(datetime.datetime.now()))
 
@@ -331,7 +364,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
                 model_joint, args,
                 predict_nums, multipliers, eval_seed,
                 writer=writer, epoch=epoch_temp, split='valid',
-                topk=args.topk, ddbc_data_dir=ddbc_data_dir
+                topk=args.topk, ddbc_data_dir=ddbc_data_dir,
+                predict_mode=predict_mode,
             )
 
             if val_recall > best_val_recall:
@@ -358,7 +392,8 @@ def model_train(tra_data_loader, val_data_loader, test_data_loader, model_joint,
         best_model, args,
         predict_nums, multipliers, eval_seed,
         writer=writer, epoch=best_epoch, split='test',
-        topk=args.topk, ddbc_data_dir=ddbc_data_dir
+        topk=args.topk, ddbc_data_dir=ddbc_data_dir,
+        predict_mode='ar',
     )
     print(f'Best checkpoint: epoch={best_epoch}, val_recall={best_val_recall:.4f}')
     logger.info(f'Best epoch={best_epoch}, val_recall={best_val_recall:.4f}')

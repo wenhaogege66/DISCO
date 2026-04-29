@@ -1,40 +1,51 @@
 #!/usr/bin/env bash
 # =============================================================================
-# train_all.sh — 一键训练脚本（DISCO + 7 baselines）
+# train_all_ml60.sh — 一键训练脚本（DISCO + 7 baselines on MovieLens-60）
 #
 # 用法:
-#   bash train_all.sh [模型列表]
+#   bash train_all_ml60.sh [模型列表]
 #
 # 示例:
-#   bash train_all.sh                          # 训练全部
-#   bash train_all.sh disco dreamrec           # 只训练 DISCO 和 DreamRec
-#   bash train_all.sh sasrec bert4rec difurec  # 只训练指定模型
+#   bash train_all_ml60.sh                          # 训练全部
+#   bash train_all_ml60.sh disco dreamrec           # 只训练 DISCO 和 DreamRec
+#   bash train_all_ml60.sh sasrec bert4rec difurec  # 只训练指定模型
 #
 # 可选模型名: disco  dreamrec  difurec  gru4rec  sasrec  bert4rec  tiger  letter
 #
 # 命名规范：所有 log 和 ckpt 均包含 DATASET 和 RUN_TAG，格式：
-#   log  : <Model>/logs/<DATASET>_<RUN_TAG>.log
-#   ckpt : <Model>/outputs/<DATASET>/<RUN_TAG>/best_model.*
+#   log  : <Model>/logs/${DATASET}_${RUN_TAG}.log
+#   ckpt : <Model>/outputs/${DATASET}/${RUN_TAG}/best_model.*
 #
-# 强烈建议手动指定 RUN_TAG，训练和测试使用同一个名字：
-#   DATASET=yelp RUN_TAG=exp_yelp_v1 bash train_all.sh
-#   DATASET=yelp RUN_TAG=exp_yelp_v1 bash test_all.sh
-# 不指定时自动生成时间戳（仅用于一次性实验，测试时需手动对应）。
+# 强烈建议手动指定 RUN_TAG：
+#   DATASET=ml60 RUN_TAG=exp_ml60_v1 bash train_all_ml60.sh
+#   DATASET=ml60 RUN_TAG=exp_ml60_v1 bash test_all_ml60.sh
 # =============================================================================
 
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# ── 数据集（影响数据路径和输出目录）─────────────────────────────────────────
-DATASET="${DATASET:-yelp}"
-DATASET_CAP="${DATASET^}"   # yelp → Yelp，用于需要首字母大写的参数
+# ── 数据集 ──────────────────────────────────────────────────────────────────
+DATASET="${DATASET:-ml60}"
+DISCO_DATA_NAME="movielens20m_len60"   # DISCO config data name
+DISCO_DATASET_NAME="MovieLens-20M"     # DISCO dataset folder name
 
-# ── 统一批次标签（所有模型共享，写入 log/ckpt 名称）──────────────────────────
+# Data paths
+DISCO_DATA_DIR="$ROOT/DISCO/datasets/$DISCO_DATASET_NAME/len60"
+DREAMREC_DATA_DIR="$ROOT/DreamRec/data/${DATASET}"
+DIFUREC_DATA_DIR="$ROOT/DiffuRec/data/${DATASET}"
+GRU4REC_DATA_DIR="$ROOT/GRU4Rec/data/${DATASET}"
+SASREC_DATA_FILE="$ROOT/SASRec/python/data/MovieLens60.txt"
+BERT4REC_DATA_DIR="$ROOT/BERT4Rec/Data/preprocessed/${DATASET}_min_rating0-min_uc0-min_sc0-splitleave_one_out"
+
+# ML-60 constants
+ITEM_NUM=17188
+SEQ_SIZE=60
+
+# ── 统一批次标签 ────────────────────────────────────────────────────────────
 if [ -z "${RUN_TAG:-}" ]; then
     RUN_TAG="run_$(date +%Y%m%d_%H%M%S)"
     echo "[WARN] RUN_TAG 未指定，自动生成: $RUN_TAG"
-    echo "[WARN] 测试时请用: DATASET=$DATASET RUN_TAG=$RUN_TAG bash test_all.sh"
 fi
 
 # ── 统一日志目录 ────────────────────────────────────────────────────────────
@@ -42,12 +53,14 @@ LOG_DIR="$ROOT/logs/$DATASET"
 mkdir -p "$LOG_DIR"
 
 echo "================================================================"
-echo "  DATASET  = $DATASET"
+echo "  DATASET  = $DATASET  (MovieLens-60)"
 echo "  RUN_TAG  = $RUN_TAG"
+echo "  ITEM_NUM = $ITEM_NUM"
+echo "  SEQ_SIZE = $SEQ_SIZE"
 echo "  LOG_DIR  = $LOG_DIR"
 echo "================================================================"
 
-# ── 选择要训练的模型 ──────────────────────────────────────────────────────────
+# ── 选择要训练的模型 ────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
     MODELS=(disco dreamrec difurec gru4rec sasrec bert4rec tiger letter)
 else
@@ -55,7 +68,7 @@ else
 fi
 
 # =============================================================================
-# 各模型超参（在此处统一调整）
+# 各模型超参（ML-60 适配）
 # =============================================================================
 
 # ── DISCO ─────────────────────────────────────────────────────────────────────
@@ -65,9 +78,9 @@ DISCO_MAX_STEPS=20000
 DISCO_HIDDEN_SIZE=64
 DISCO_RQ_N_CODEBOOKS=3
 DISCO_RQ_CODEBOOK_SIZE=256
-DISCO_MODEL_LENGTH=52          # 1 + item_num*(n_codebooks+2) + 1 → 保持与 rq 配置一致
-DISCO_SEQ_LEN=10
-DISCO_SAMPLING_STEPS=25
+DISCO_MODEL_LENGTH=302         # 1 + 60*(3+2) + 1 = 302 (full 60 items)
+DISCO_SEQ_LEN=60
+DISCO_SAMPLING_STEPS=256
 DISCO_CFG_ENABLED=true
 DISCO_CFG_ENCODER=true
 DISCO_CFG_P_DROP=0.1
@@ -82,12 +95,12 @@ DREAMREC_DIFFUSER_TYPE="mlp1"
 DREAMREC_DROPOUT=0.15
 DREAMREC_L2_DECAY=1e-4
 DREAMREC_OPTIMIZER="adamw"
-DREAMREC_LR_LIST=(0.001)       # 可改为多个 lr 串行: (0.01 0.001 0.0001)
+DREAMREC_LR_LIST=(0.001)
 DREAMREC_TIMESTEPS=500
 DREAMREC_BETA_SCHE="exp"
 DREAMREC_W=10
 DREAMREC_P=0.1
-DREAMREC_PREDICT_NUMS="3"
+DREAMREC_PREDICT_NUMS="30"
 DREAMREC_MULTIPLIERS="19"
 DREAMREC_EVAL_FREQ=5
 DREAMREC_PREDICT_MODE="single"
@@ -98,15 +111,17 @@ DREAMREC_SEED=100
 DIFUREC_GPU=1
 DIFUREC_HIDDEN_SIZE=64
 DIFUREC_BATCH_SIZE=512
-DIFUREC_EPOCHS=500
+DIFUREC_EPOCHS=200
 DIFUREC_LR=0.001
 DIFUREC_NUM_BLOCKS=4
 DIFUREC_DIFFUSION_STEPS=32
 DIFUREC_NOISE_SCHEDULE="trunc_lin"
 DIFUREC_LAMBDA_UNCERTAINTY=0.001
-DIFUREC_PREDICT_NUMS="3"
+DIFUREC_PREDICT_NUMS="30"
 DIFUREC_MULTIPLIERS="19"
 DIFUREC_EVAL_INTERVAL=20
+DIFUREC_EVAL_START_EPOCH=50
+DIFUREC_PREDICT_MODE="single"
 DIFUREC_PATIENCE=5
 DIFUREC_TOPK=1
 DIFUREC_SEED=1997
@@ -119,7 +134,7 @@ GRU4REC_EPOCHS=50
 GRU4REC_BATCH_SIZE=512
 GRU4REC_LR=0.05
 GRU4REC_N_SAMPLE=2048
-GRU4REC_PREDICT_NUMS="3"
+GRU4REC_PREDICT_NUMS="30"
 GRU4REC_MULTIPLIERS="19"
 GRU4REC_EVAL_FREQ=5
 GRU4REC_PREDICT_MODE="single"
@@ -128,7 +143,7 @@ GRU4REC_SEED=42
 
 # ── SASRec ────────────────────────────────────────────────────────────────────
 SASREC_GPU=1
-SASREC_MAXLEN=10
+SASREC_MAXLEN=60
 SASREC_HIDDEN_UNITS=64
 SASREC_NUM_BLOCKS=2
 SASREC_NUM_HEADS=1
@@ -138,7 +153,7 @@ SASREC_LR=0.001
 SASREC_EPOCHS=200
 SASREC_EVAL_INTERVAL=5
 SASREC_PATIENCE=25
-SASREC_PREDICT_NUMS="[3]"
+SASREC_PREDICT_NUMS="[30]"
 SASREC_MULTIPLIERS="[19]"
 SASREC_SEED=100
 
@@ -150,10 +165,10 @@ BERT4REC_LR=0.001
 BERT4REC_HIDDEN_UNITS=64
 BERT4REC_NUM_BLOCKS=2
 BERT4REC_NUM_HEADS=4
-BERT4REC_MAX_LEN=10
+BERT4REC_MAX_LEN=60
 BERT4REC_DROPOUT=0.1
 BERT4REC_MASK_PROB=0.15
-BERT4REC_PREDICT_NUMS="3"
+BERT4REC_PREDICT_NUMS="30"
 BERT4REC_MULTIPLIERS="19"
 BERT4REC_EVAL_FREQ=5
 BERT4REC_PATIENCE=10
@@ -161,26 +176,93 @@ BERT4REC_SEED=100
 
 # ── TIGER ─────────────────────────────────────────────────────────────────────
 TIGER_GPU=0
-TIGER_EPOCHS=200
+TIGER_EPOCHS=150
 TIGER_BATCH_SIZE=256
 TIGER_EVAL_BATCH_SIZE=8
-TIGER_EVAL_INTERVAL=5
+TIGER_EVAL_START_EPOCH=50
+TIGER_EVAL_INTERVAL=20
 TIGER_PATIENCE=25
-TIGER_PREDICT_NUMS="[3]"
+TIGER_PREDICT_NUMS="[30]"
 TIGER_MULTIPLIERS="[19]"
+TIGER_PREDICT_MODE="single"
 TIGER_SEED=100
 
 # ── LETTER ────────────────────────────────────────────────────────────────────
 LETTER_GPU=1
-LETTER_MAX_HIS_LEN=20
+LETTER_MAX_HIS_LEN=60
 LETTER_BATCH_SIZE=256
 LETTER_LR=5e-4
-LETTER_EPOCHS=200
+LETTER_EPOCHS=150
 LETTER_WEIGHT_DECAY=0.01
 LETTER_PATIENCE=20
-LETTER_PREDICT_NUMS=3
+LETTER_PREDICT_NUMS=30
 LETTER_MULTIPLIERS=19
+LETTER_EVAL_START_EPOCH=50
+LETTER_EVAL_INTERVAL=20
+LETTER_PREDICT_MODE="single"
 LETTER_SEED=100
+
+# =============================================================================
+# 数据转换检查
+# =============================================================================
+check_and_convert_data() {
+    echo ""
+    echo "──────────────────────────────────────────────────────────────"
+    echo "  检查 ML-60 数据转换状态"
+    echo "──────────────────────────────────────────────────────────────"
+
+    local need_convert=false
+
+    # DreamRec data
+    if [ ! -f "$DREAMREC_DATA_DIR/data_statis.df" ]; then
+        echo "  [MISSING] DreamRec .df data"
+        need_convert=true
+    else
+        echo "  [OK] DreamRec .df data"
+    fi
+
+    # DiffuRec data
+    if [ ! -f "$DIFUREC_DATA_DIR/dataset.pkl" ]; then
+        echo "  [MISSING] DiffuRec dataset.pkl"
+        need_convert=true
+    else
+        echo "  [OK] DiffuRec dataset.pkl"
+    fi
+
+    # BERT4Rec data
+    if [ ! -f "$BERT4REC_DATA_DIR/dataset.pkl" ]; then
+        echo "  [MISSING] BERT4Rec dataset.pkl"
+        need_convert=true
+    else
+        echo "  [OK] BERT4Rec dataset.pkl"
+    fi
+
+    # SASRec data
+    if [ ! -f "$SASREC_DATA_FILE" ]; then
+        echo "  [MISSING] SASRec MovieLens60.txt"
+        need_convert=true
+    else
+        echo "  [OK] SASRec MovieLens60.txt"
+    fi
+
+    # Test candidates (check predict_n=30, multiplier=19)
+    if [ ! -f "$DISCO_DATA_DIR/test_candidates_seed1_x19_items30.pkl" ]; then
+        echo "  [MISSING] test_candidates_seed1_x19_items30.pkl"
+        need_convert=true
+    else
+        echo "  [OK] test_candidates_seed1_x19_items30.pkl"
+    fi
+
+    if [ "$need_convert" = true ]; then
+        echo ""
+        echo "  正在运行数据转换..."
+        conda run -n DDBC python "$DISCO_DATA_DIR/convert_disco_to_dreamrec.py"
+        conda run -n DDBC python "$DISCO_DATA_DIR/convert_disco_to_diffurec.py"
+        conda run -n DDBC python "$DISCO_DATA_DIR/convert_disco_to_bert4rec.py"
+        conda run -n DDBC python "$DISCO_DATA_DIR/convert_disco_to_sasrec.py"
+        echo "  数据转换完成。"
+    fi
+}
 
 # =============================================================================
 # 训练函数
@@ -191,7 +273,9 @@ train_disco() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [DISCO] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_FILE="$LOG_DIR/disco_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    local LOG_DIR="$ROOT/DISCO/logs"
+    mkdir -p "$LOG_DIR"
+    local LOG_FILE="$LOG_DIR/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
 
     export CUDA_VISIBLE_DEVICES=$DISCO_GPUS
     export PYTHONPATH="$ROOT/DISCO:$PYTHONPATH"
@@ -205,8 +289,8 @@ train_disco() {
         trainer.max_steps=$DISCO_MAX_STEPS \
         model=small \
         model.hidden_size=$DISCO_HIDDEN_SIZE \
-        data=$DATASET \
-        dataset=$DATASET_CAP \
+        data=$DISCO_DATA_NAME \
+        dataset=$DISCO_DATASET_NAME \
         run_name="disco-${DATASET}-${RUN_TAG}" \
         parameterization=subs \
         seq_len=$DISCO_SEQ_LEN \
@@ -241,31 +325,34 @@ train_dreamrec() {
         mkdir -p "$SAVE_DIR"
 
         echo "  LR=$LR  ->  $SAVE_DIR"
-        python -u "$ROOT/DreamRec/DreamRec.py" \
-            --data         $DATASET \
-            --epoch        $DREAMREC_EPOCH \
-            --batch_size   $DREAMREC_BATCH_SIZE \
-            --random_seed  $DREAMREC_SEED \
-            --hidden_factor $DREAMREC_HIDDEN_FACTOR \
-            --diffuser_type "$DREAMREC_DIFFUSER_TYPE" \
-            --dropout_rate  $DREAMREC_DROPOUT \
-            --l2_decay      $DREAMREC_L2_DECAY \
-            --optimizer     "$DREAMREC_OPTIMIZER" \
-            --lr            $LR \
-            --timesteps     $DREAMREC_TIMESTEPS \
-            --beta_sche     "$DREAMREC_BETA_SCHE" \
-            --w             $DREAMREC_W \
-            --p             $DREAMREC_P \
-            --predict_nums  "$DREAMREC_PREDICT_NUMS" \
-            --candidate_multipliers "$DREAMREC_MULTIPLIERS" \
-            --eval_freq     $DREAMREC_EVAL_FREQ \
-            --predict_mode  "$DREAMREC_PREDICT_MODE" \
-            --topk          $DREAMREC_TOPK \
-            --tb_log_dir    "$TB_DIR" \
-            --save_dir      "$SAVE_DIR" \
-            --cuda          $DREAMREC_GPU \
-            --descri        "$RUN_NAME" \
-            2>&1 | tee "$LOG_FILE"
+        (
+            cd "$ROOT/DreamRec"
+            python -u DreamRec.py \
+                --data         $DATASET \
+                --epoch        $DREAMREC_EPOCH \
+                --batch_size   $DREAMREC_BATCH_SIZE \
+                --random_seed  $DREAMREC_SEED \
+                --hidden_factor $DREAMREC_HIDDEN_FACTOR \
+                --diffuser_type "$DREAMREC_DIFFUSER_TYPE" \
+                --dropout_rate  $DREAMREC_DROPOUT \
+                --l2_decay      $DREAMREC_L2_DECAY \
+                --optimizer     "$DREAMREC_OPTIMIZER" \
+                --lr            $LR \
+                --timesteps     $DREAMREC_TIMESTEPS \
+                --beta_sche     "$DREAMREC_BETA_SCHE" \
+                --w             $DREAMREC_W \
+                --p             $DREAMREC_P \
+                --predict_nums  "$DREAMREC_PREDICT_NUMS" \
+                --candidate_multipliers "$DREAMREC_MULTIPLIERS" \
+                --eval_freq     $DREAMREC_EVAL_FREQ \
+                --predict_mode  "$DREAMREC_PREDICT_MODE" \
+                --topk          $DREAMREC_TOPK \
+                --tb_log_dir    "$TB_DIR" \
+                --save_dir      "$SAVE_DIR" \
+                --cuda          $DREAMREC_GPU \
+                --descri        "$RUN_NAME" \
+                2>&1 | tee "$LOG_FILE"
+        )
     done
     echo "  [DreamRec] 完成"
 }
@@ -282,9 +369,9 @@ train_difurec() {
 
     CUDA_VISIBLE_DEVICES=$DIFUREC_GPU python "$ROOT/DiffuRec/src/main.py" \
         --dataset           $DATASET \
-        --data_path         "$ROOT/DiffuRec/data/${DATASET}/dataset.pkl" \
+        --data_path         "$DIFUREC_DATA_DIR/dataset.pkl" \
         --log_file          "$ROOT/DiffuRec/log/" \
-        --max_len           10 \
+        --max_len           $SEQ_SIZE \
         --hidden_size       $DIFUREC_HIDDEN_SIZE \
         --batch_size        $DIFUREC_BATCH_SIZE \
         --epochs            $DIFUREC_EPOCHS \
@@ -298,11 +385,13 @@ train_difurec() {
         --schedule_sampler_name lossaware \
         --lambda_uncertainty $DIFUREC_LAMBDA_UNCERTAINTY \
         --eval_interval     $DIFUREC_EVAL_INTERVAL \
+        --eval_start_epoch  $DIFUREC_EVAL_START_EPOCH \
+        --predict_mode      "$DIFUREC_PREDICT_MODE" \
         --patience          $DIFUREC_PATIENCE \
         --predict_nums      "$DIFUREC_PREDICT_NUMS" \
         --candidate_multipliers "$DIFUREC_MULTIPLIERS" \
         --topk              $DIFUREC_TOPK \
-        --ddbc_data_dir     "$ROOT/DreamRec/data/${DATASET}" \
+        --ddbc_data_dir     "$DREAMREC_DATA_DIR" \
         --tb_log_dir        "$TB_DIR" \
         --save_dir          "$SAVE_DIR" \
         --description       "difurec-${DATASET}-${RUN_TAG}" \
@@ -317,9 +406,10 @@ train_gru4rec() {
     echo "  [GRU4Rec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
     local OUTPUT_DIR="$ROOT/GRU4Rec/outputs/${DATASET}/${RUN_TAG}"
-    local LOG_FILE="$LOG_DIR/gru4rec_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    local LOG_FILE="$ROOT/GRU4Rec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/GRU4Rec/logs"
 
-    conda run -n DDBC python "$ROOT/GRU4Rec/train_yelp.py" \
+    conda run -n DDBC python "$ROOT/GRU4Rec/train_movielens60.py" \
         --layers              "$GRU4REC_LAYERS" \
         --loss                "$GRU4REC_LOSS" \
         --epochs              "$GRU4REC_EPOCHS" \
@@ -345,12 +435,13 @@ train_sasrec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [SASRec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_FILE="$LOG_DIR/sasrec_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    local LOG_FILE="$ROOT/SASRec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/SASRec/logs"
 
     (
         cd "$ROOT/SASRec/python"
         CUDA_VISIBLE_DEVICES=$SASREC_GPU python main_disco.py \
-            --dataset=$DATASET_CAP \
+            --dataset=MovieLens60 \
             --train_dir="${DATASET}_${RUN_TAG}" \
             --maxlen=$SASREC_MAXLEN \
             --hidden_units=$SASREC_HIDDEN_UNITS \
@@ -365,7 +456,7 @@ train_sasrec() {
             --ddbc_predict_nums="$SASREC_PREDICT_NUMS" \
             --ddbc_multipliers="$SASREC_MULTIPLIERS" \
             --ddbc_seed=$SASREC_SEED \
-            --item_num=20033 \
+            --item_num=$ITEM_NUM \
             --tb_log_dir="$ROOT/SASRec/tensorboard/${DATASET}_${RUN_TAG}"
     ) 2>&1 | tee "$LOG_FILE"
     echo "  [SASRec] 完成，log: $LOG_FILE"
@@ -376,10 +467,11 @@ train_bert4rec() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [BERT4Rec] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local LOG_FILE="$LOG_DIR/bert4rec_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    local LOG_FILE="$ROOT/BERT4Rec/logs/${DATASET}_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
+    mkdir -p "$ROOT/BERT4Rec/logs"
 
     CUDA_VISIBLE_DEVICES=$BERT4REC_GPU \
-    python "$ROOT/BERT4Rec/main.py" \
+    conda run -n BERT4Rec python "$ROOT/BERT4Rec/main.py" \
         --template             train_bert_yelp \
         --dataset_code         $DATASET \
         --device               cuda \
@@ -406,7 +498,7 @@ train_bert4rec() {
         --eval_freq            $BERT4REC_EVAL_FREQ \
         --patience             $BERT4REC_PATIENCE \
         --random_seed          $BERT4REC_SEED \
-        --ddbc_data_dir        "$ROOT/DreamRec/data/${DATASET}" \
+        --ddbc_data_dir        "$DREAMREC_DATA_DIR" \
         --experiment_dir       "$ROOT/BERT4Rec/experiments" \
         --experiment_description "bert4rec-${DATASET}-${RUN_TAG}" \
         2>&1 | tee "$LOG_FILE"
@@ -424,13 +516,16 @@ train_tiger() {
         cd "$ROOT/TIGER"
         CUDA_VISIBLE_DEVICES=$TIGER_GPU python main.py \
             --model=TIGER \
-            --dataset=$DATASET_CAP \
+            --dataset=MovieLens-20M \
+            --category=len60 \
             --run_id="tiger-${DATASET}-${RUN_TAG}" \
             --ddbc_eval=True \
             --ddbc_predict_nums="$TIGER_PREDICT_NUMS" \
             --ddbc_multipliers="$TIGER_MULTIPLIERS" \
             --ddbc_seed=$TIGER_SEED \
+            --ddbc_predict_mode="$TIGER_PREDICT_MODE" \
             --eval_interval=$TIGER_EVAL_INTERVAL \
+            --eval_start_epoch=$TIGER_EVAL_START_EPOCH \
             --epochs=$TIGER_EPOCHS \
             --patience=$TIGER_PATIENCE \
             --train_batch_size=$TIGER_BATCH_SIZE \
@@ -444,14 +539,14 @@ train_letter() {
     echo "──────────────────────────────────────────────────────────────"
     echo "  [LETTER] 开始训练  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
     echo "──────────────────────────────────────────────────────────────"
-    local OUTPUT_DIR="$ROOT/LETTER/LETTER-TIGER/ckpt/${DATASET_CAP}_${RUN_TAG}"
+    local OUTPUT_DIR="$ROOT/LETTER/LETTER-TIGER/ckpt/MovieLens-20M_${RUN_TAG}"
     local LOG_FILE="$LOG_DIR/letter_${RUN_TAG}_$(date +%Y%m%d_%H%M%S).log"
 
     export WANDB_DISABLED=true
     CUDA_VISIBLE_DEVICES=$LETTER_GPU \
     torchrun --nproc_per_node=1 --master_port=2315 \
         "$ROOT/LETTER/LETTER-TIGER/finetune_disco.py" \
-        --dataset $DATASET_CAP \
+        --dataset MovieLens-20M \
         --data_path "$ROOT/LETTER/data" \
         --base_model "$ROOT/LETTER/LETTER-TIGER/ckpt/TIGER" \
         --output_dir "$OUTPUT_DIR" \
@@ -472,6 +567,9 @@ train_letter() {
         --ddbc_multipliers $LETTER_MULTIPLIERS \
         --ddbc_seed $LETTER_SEED \
         --patience $LETTER_PATIENCE \
+        --eval_start_epoch $LETTER_EVAL_START_EPOCH \
+        --eval_interval $LETTER_EVAL_INTERVAL \
+        --predict_mode $LETTER_PREDICT_MODE \
         2>&1 | tee "$LOG_FILE"
     echo "  [LETTER] 完成，log: $LOG_FILE"
 }
@@ -479,6 +577,9 @@ train_letter() {
 # =============================================================================
 # 主流程
 # =============================================================================
+
+# 先检查和转换数据
+check_and_convert_data
 
 SUMMARY=()
 
@@ -546,6 +647,6 @@ done
 
 echo ""
 echo "================================================================"
-echo "  训练完成汇总  RUN_TAG=$RUN_TAG"
+echo "  训练完成汇总  DATASET=$DATASET  RUN_TAG=$RUN_TAG"
 for line in "${SUMMARY[@]}"; do echo "$line"; done
 echo "================================================================"

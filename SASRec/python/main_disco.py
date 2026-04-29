@@ -91,8 +91,8 @@ if __name__ == '__main__':
             multipliers=args.ddbc_multipliers,
             seed=args.ddbc_seed,
             writer=None, epoch=0,
-            split='test'
-        )
+            split='test',
+            dataset=args.dataset)
         exit(0)
 
     num_batch = (len(user_train) - 1) // args.batch_size + 1
@@ -132,7 +132,7 @@ if __name__ == '__main__':
 
     log_path = os.path.join(folder, 'log.txt')
     f_log = open(log_path, 'w')
-    f_log.write('epoch val_recall@3_x19\n')
+    f_log.write(f"epoch val_recall@{args.ddbc_predict_nums[0]}_x{args.ddbc_multipliers[0]}\n")
 
     t0 = time.time()
 
@@ -170,7 +170,8 @@ if __name__ == '__main__':
                 multipliers=args.ddbc_multipliers,
                 seed=args.ddbc_seed,
                 writer=writer, epoch=epoch,
-                split='val'
+                split='val',
+                dataset=args.dataset
             )
             f_log.write(f'{epoch} {val_recall:.6f}\n')
             f_log.flush()
@@ -218,7 +219,8 @@ if __name__ == '__main__':
             multipliers=args.ddbc_multipliers,
             seed=args.ddbc_seed,
             writer=writer, epoch=best_epoch,
-            split='test'
+            split='test',
+            dataset=args.dataset
         )
     else:
         print('[Test] No checkpoint found, skipping test evaluation.')

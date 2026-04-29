@@ -459,7 +459,13 @@ def evaluate(model, test_data, diff, device):
     return hr_20
 
 
-DDBC_CAND_DIR = "/home/sjj/wenhao/DISCO/datasets/Yelp"
+DDBC_CAND_DIRS = {
+    'yelp': '/home/sjj/wenhao/DISCO/datasets/Yelp',
+    'ml60': '/home/sjj/wenhao/DISCO/datasets/MovieLens-20M/len60',
+}
+
+def _get_ddbc_cand_dir(data_name):
+    return DDBC_CAND_DIRS.get(data_name, DDBC_CAND_DIRS['yelp'])
 
 
 def _load_or_build_candidate_pool(labels_list, item_num, multiplier, predict_n, seed, cache_path):
@@ -567,10 +573,11 @@ def evaluate_ddbc(model, diff, device,
     for predict_n in predict_nums:
         # --- 加载评估数据 ---
         data_path = os.path.join(data_directory, f'{split}_data_items{predict_n}.df')
-        eval_data = pd.read_pickle(data_path)
-        seq       = list(eval_data['seq'].values)
-        len_seq   = list(eval_data['len_seq'].values)
-        labels    = list(eval_data['labels'].values)
+        with open(data_path, 'rb') as f:
+            eval_data = pickle.load(f)
+        seq       = eval_data['seq']
+        len_seq   = eval_data['len_seq']
+        labels    = eval_data['labels']
         num_total = len(seq)
 
         for multiplier in multipliers:
@@ -578,7 +585,7 @@ def evaluate_ddbc(model, diff, device,
             if split == 'test':
                 # 直接复用 DDBC 已生成的测试候选集（seed=1，与 DDBC 完全一致）
                 cand_path = os.path.join(
-                    DDBC_CAND_DIR,
+                    _get_ddbc_cand_dir(data_directory.split('/')[-1]),
                     f'test_candidates_seed1_x{multiplier}_items{predict_n}.pkl'
                 )
             else:
@@ -803,21 +810,28 @@ if __name__ == '__main__':
     os.makedirs(save_dir, exist_ok=True)
 
     train_data = pd.read_pickle(os.path.join(data_directory, 'train_data.df'))
+    # Convert to lists once to avoid pandas .sample() overhead (O(rows) per call)
+    all_seq     = list(train_data['seq'].values)
+    all_len_seq = list(train_data['len_seq'].values)
+    all_next    = list(train_data['next'].values)
+    num_rows    = len(all_seq)
+    num_batches = int(num_rows / args.batch_size)
+    all_indices = np.arange(num_rows)
 
     best_val_recall = 0.0
     best_epoch = 0
-    num_rows    = train_data.shape[0]
-    num_batches = int(num_rows / args.batch_size)
 
     for i in range(args.epoch):
         start_time = Time.time()
         model.train()
         epoch_loss = 0.0
+        # Shuffle once per epoch — much faster than .sample(n) per batch
+        np.random.shuffle(all_indices)
         for j in range(num_batches):
-            batch  = train_data.sample(n=args.batch_size).to_dict()
-            seq    = list(batch['seq'].values())
-            len_seq = list(batch['len_seq'].values())
-            target = list(batch['next'].values())
+            batch_idx = all_indices[j * args.batch_size:(j + 1) * args.batch_size]
+            seq    = [all_seq[k]    for k in batch_idx]
+            len_seq = [all_len_seq[k] for k in batch_idx]
+            target = [all_next[k]   for k in batch_idx]
 
             optimizer.zero_grad()
             seq     = torch.LongTensor(seq).to(device)
