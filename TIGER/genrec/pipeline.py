@@ -41,7 +41,11 @@ class Pipeline:
         )
 
 
-        self.accelerator = Accelerator(log_with='tensorboard', project_dir=self.project_dir)
+        use_fp16 = self.config.get('use_fp16', False)
+        accelerator_kwargs = dict(log_with='tensorboard', project_dir=self.project_dir)
+        if use_fp16:
+            accelerator_kwargs['mixed_precision'] = 'fp16'
+        self.accelerator = Accelerator(**accelerator_kwargs)
         self.config['accelerator'] = self.accelerator
 
 

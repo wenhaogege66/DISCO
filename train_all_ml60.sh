@@ -111,7 +111,7 @@ DREAMREC_SEED=100
 DIFUREC_GPU=1
 DIFUREC_HIDDEN_SIZE=64
 DIFUREC_BATCH_SIZE=512
-DIFUREC_EPOCHS=200
+DIFUREC_EPOCHS=80
 DIFUREC_LR=0.001
 DIFUREC_NUM_BLOCKS=4
 DIFUREC_DIFFUSION_STEPS=32
@@ -179,7 +179,7 @@ TIGER_GPU=0
 TIGER_EPOCHS=150
 TIGER_BATCH_SIZE=256
 TIGER_EVAL_BATCH_SIZE=8
-TIGER_EVAL_START_EPOCH=50
+TIGER_EVAL_START_EPOCH=30
 TIGER_EVAL_INTERVAL=20
 TIGER_PATIENCE=25
 TIGER_PREDICT_NUMS="[30]"
@@ -197,7 +197,7 @@ LETTER_WEIGHT_DECAY=0.01
 LETTER_PATIENCE=20
 LETTER_PREDICT_NUMS=30
 LETTER_MULTIPLIERS=19
-LETTER_EVAL_START_EPOCH=50
+LETTER_EVAL_START_EPOCH=30
 LETTER_EVAL_INTERVAL=20
 LETTER_PREDICT_MODE="single"
 LETTER_SEED=100
@@ -262,6 +262,13 @@ check_and_convert_data() {
         conda run -n DDBC python "$DISCO_DATA_DIR/convert_disco_to_sasrec.py"
         echo "  数据转换完成。"
     fi
+
+    # Always re-derive TIGER/LETTER training data from DISCO train.txt
+    # (DISCO is source of truth for the train/val/test split)
+    echo ""
+    echo "  正在从 DISCO train.txt 派生 TIGER/LETTER 训练数据..."
+    conda run -n DDBC python "$DISCO_DATA_DIR/convert_disco_to_tiger_letter.py"
+    echo "  TIGER/LETTER 数据派生完成（仅使用 DISCO 训练集用户）。"
 }
 
 # =============================================================================
@@ -516,7 +523,7 @@ train_tiger() {
         cd "$ROOT/TIGER"
         CUDA_VISIBLE_DEVICES=$TIGER_GPU python main.py \
             --model=TIGER \
-            --dataset=MovieLens-20M \
+            --dataset=MovieLens20M \
             --category=len60 \
             --run_id="tiger-${DATASET}-${RUN_TAG}" \
             --ddbc_eval=True \
@@ -524,12 +531,15 @@ train_tiger() {
             --ddbc_multipliers="$TIGER_MULTIPLIERS" \
             --ddbc_seed=$TIGER_SEED \
             --ddbc_predict_mode="$TIGER_PREDICT_MODE" \
+            --ddbc_dataset="MovieLens-20M/len60" \
+            --ddbc_item_num=$ITEM_NUM \
             --eval_interval=$TIGER_EVAL_INTERVAL \
             --eval_start_epoch=$TIGER_EVAL_START_EPOCH \
             --epochs=$TIGER_EPOCHS \
             --patience=$TIGER_PATIENCE \
             --train_batch_size=$TIGER_BATCH_SIZE \
-            --eval_batch_size=$TIGER_EVAL_BATCH_SIZE
+            --eval_batch_size=$TIGER_EVAL_BATCH_SIZE \
+            --use_fp16=True
     ) 2>&1 | tee "$LOG_FILE"
     echo "  [TIGER] 完成，log: $LOG_FILE"
 }
@@ -570,6 +580,7 @@ train_letter() {
         --eval_start_epoch $LETTER_EVAL_START_EPOCH \
         --eval_interval $LETTER_EVAL_INTERVAL \
         --predict_mode $LETTER_PREDICT_MODE \
+        --fp16 \
         2>&1 | tee "$LOG_FILE"
     echo "  [LETTER] 完成，log: $LOG_FILE"
 }

@@ -28,11 +28,28 @@ from transformers.modeling_outputs import BaseModelOutput
 
 
 # ── Path constants ────────────────────────────────────────────────────────────
-DREAMREC_DATA_DIR  = "/home/sjj/wenhao/DreamRec/data/yelp"
-DISCO_CAND_DIR     = "/home/sjj/wenhao/DISCO/datasets/Yelp"
-LETTER_CAND_DIR    = "/home/sjj/wenhao/LETTER/data/yelp_valid_cands"
-LETTER_DATA_DIR    = "/home/sjj/wenhao/LETTER/data/Yelp"
-ITEM_NUM           = 20033   # DISCO 0-based item count
+DATASET_CONFIG = {
+    'Yelp': {
+        'dreamrec_data_dir': '/home/sjj/wenhao/DreamRec/data/yelp',
+        'disco_cand_dir':    '/home/sjj/wenhao/DISCO/datasets/Yelp',
+        'letter_cand_dir':   '/home/sjj/wenhao/LETTER/data/yelp_valid_cands',
+        'letter_data_dir':   '/home/sjj/wenhao/LETTER/data/Yelp',
+        'item_num':          20033,
+    },
+    'MovieLens-20M': {
+        'dreamrec_data_dir': '/home/sjj/wenhao/DreamRec/data/ml60',
+        'disco_cand_dir':    '/home/sjj/wenhao/DISCO/datasets/MovieLens-20M/len60',
+        'letter_cand_dir':   '/home/sjj/wenhao/LETTER/data/MovieLens-20M/len60',
+        'letter_data_dir':   '/home/sjj/wenhao/LETTER/data/MovieLens-20M',
+        'item_num':          17188,
+    },
+}
+
+DEFAULT_DATASET = 'Yelp'
+
+
+def _cfg(dataset: str):
+    return DATASET_CONFIG.get(dataset, DATASET_CONFIG[DEFAULT_DATASET])
 
 
 # ── Build item → token-ID list mapping ───────────────────────────────────────
@@ -42,7 +59,8 @@ def build_item_token_map(tokenizer, dataset='Yelp'):
         item2token_ids : dict[int -> list[int]]
             DISCO 0-based item ID -> list of 4 T5 token IDs
     """
-    index_path = os.path.join(LETTER_DATA_DIR, f'{dataset}.index.json')
+    cfg = _cfg(dataset)
+    index_path = os.path.join(cfg['letter_data_dir'], f'{dataset}.index.json')
     with open(index_path, 'r') as f:
         indices = json.load(f)   # str(item_id) -> ['<a_X>','<b_X>','<c_X>','<d_X>']
 
@@ -113,7 +131,8 @@ _INDEX_CACHE = {}   # module-level cache: dataset -> {item_id_str: token_str_lis
 
 def _get_index(dataset='Yelp'):
     if dataset not in _INDEX_CACHE:
-        index_path = os.path.join(LETTER_DATA_DIR, f'{dataset}.index.json')
+        cfg = _cfg(dataset)
+        index_path = os.path.join(cfg['letter_data_dir'], f'{dataset}.index.json')
         with open(index_path, 'r') as f:
             _INDEX_CACHE[dataset] = json.load(f)
     return _INDEX_CACHE[dataset]
@@ -216,7 +235,7 @@ def score_candidates(model, tokenizer, input_ids, attention_mask,
 def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
                          predict_nums, multipliers, seed,
                          writer=None, epoch=None, split='val',
-                         predict_mode='ar'):
+                         predict_mode='ar', dataset='Yelp'):
     """
     DDBC-compatible evaluation for LETTER-TIGER.
 
@@ -224,13 +243,14 @@ def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
         all_results  : dict[(predict_n, multiplier)] -> metrics dict
         main_recall  : float, recall@3_x19 (primary checkpoint metric)
     """
+    cfg = _cfg(dataset)
     all_results = {}
     model.eval()
 
     file_split = 'valid' if split == 'val' else split
 
     for predict_n in predict_nums:
-        data_path = os.path.join(DREAMREC_DATA_DIR, f'{file_split}_data_items{predict_n}.df')
+        data_path = os.path.join(cfg['dreamrec_data_dir'], f'{file_split}_data_items{predict_n}.df')
         eval_data    = pd.read_pickle(data_path)
         seq_list     = list(eval_data['seq'].values)
         len_seq_list = list(eval_data['len_seq'].values)
@@ -240,17 +260,17 @@ def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
         for multiplier in multipliers:
             if split == 'test':
                 cand_path = os.path.join(
-                    DISCO_CAND_DIR,
+                    cfg['disco_cand_dir'],
                     f'test_candidates_seed1_x{multiplier}_items{predict_n}.pkl'
                 )
             else:
                 cand_path = os.path.join(
-                    LETTER_CAND_DIR,
+                    cfg['letter_cand_dir'],
                     f'valid_candidates_seed{seed}_x{multiplier}_items{predict_n}.pkl'
                 )
 
             candidate_pool = _load_or_build_candidate_pool(
-                labels_list, ITEM_NUM, multiplier, predict_n, seed, cand_path
+                labels_list, cfg['item_num'], multiplier, predict_n, seed, cand_path
             )
 
             metric_accum = {'recall': 0., 'precision': 0.,
@@ -270,7 +290,7 @@ def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
                     cands   = candidate_pool[i]
 
                     input_ids, attention_mask = tokenize_seq_for_eval(
-                        tokenizer, seq, len_seq
+                        tokenizer, seq, len_seq, dataset=dataset
                     )
                     scores = score_candidates(
                         model, tokenizer, input_ids, attention_mask,
@@ -289,7 +309,7 @@ def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
                         step_hits  = []
                         cur_valid  = list(seq[:len_seq])  # 0-based valid items
                         for t in range(predict_n):
-                            cur_inp, cur_mask = tokenize_seq_for_eval(tokenizer, cur_valid, len(cur_valid))
+                            cur_inp, cur_mask = tokenize_seq_for_eval(tokenizer, cur_valid, len(cur_valid), dataset=dataset)
                             step_scores = score_candidates(
                                 model, tokenizer, cur_inp, cur_mask,
                                 cands, item2token_ids, device

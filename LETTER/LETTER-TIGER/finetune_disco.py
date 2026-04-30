@@ -38,7 +38,8 @@ class DDBCEvalCallback(TrainerCallback):
 
     def __init__(self, tokenizer, item2token_ids, device,
                  predict_nums, multipliers, seed,
-                 eval_start_epoch=0, eval_interval=1, predict_mode='ar'):
+                 eval_start_epoch=0, eval_interval=1, predict_mode='ar',
+                 dataset='Yelp'):
         self.tokenizer        = tokenizer
         self.item2token_ids   = item2token_ids
         self.device           = device
@@ -48,6 +49,7 @@ class DDBCEvalCallback(TrainerCallback):
         self.eval_start_epoch = eval_start_epoch
         self.eval_interval    = eval_interval
         self.predict_mode     = predict_mode
+        self.dataset          = dataset
         self._eval_call_count = 0
 
     def on_evaluate(self, args, state, control, model=None, metrics=None, **kwargs):
@@ -73,6 +75,7 @@ class DDBCEvalCallback(TrainerCallback):
             seed=self.seed,
             split='val',
             predict_mode=self.predict_mode,
+            dataset=self.dataset,
         )
 
         # Inject into metrics dict so Trainer's best-model selection sees it.
@@ -128,6 +131,7 @@ def train(args):
         eval_start_epoch = args.eval_start_epoch,
         eval_interval    = args.eval_interval,
         predict_mode     = args.predict_mode,
+        dataset          = args.dataset,
     )
 
     trainer = Trainer(
@@ -156,7 +160,8 @@ def train(args):
             metric_for_best_model       = 'ddbc_recall',
             greater_is_better           = True,
             ddp_find_unused_parameters  = False if ddp else None,
-            eval_delay                  = 1 if args.save_and_eval_strategy == "epoch" else 2000,
+            eval_delay                  = args.eval_start_epoch if args.save_and_eval_strategy == "epoch" else max(2000, args.eval_start_epoch * 100),
+            fp16                         = args.fp16,
             report_to                   = 'tensorboard',
             logging_dir                 = os.path.join('/home/sjj/wenhao/LETTER/tensorboard',
                                                        args.dataset),
@@ -184,6 +189,7 @@ def train(args):
             seed         = args.ddbc_seed,
             split        = 'test',
             predict_mode = 'ar',
+            dataset      = args.dataset,
         )
 
 
