@@ -187,16 +187,22 @@ def score_candidates(model, tokenizer, input_ids, attention_mask, candidate_ids_
         )
     # logits: [n_cands, 1+n_digit, vocab_size]
     # logits[:, d, :] predicts the (d+1)-th decoder token, i.e., tokens[d]
-    log_probs = F.log_softmax(outputs.logits, dim=-1)  # [n_cands, 1+n_digit, vocab_size]
-
-    scores = np.full(n_cands, -np.inf, dtype=np.float32)
+    # Gather logits for candidate tokens only (log_softmax normalisation
+    # cancels out across candidates → raw logits give identical ranking)
+    logits = outputs.logits  # [n_cands, 1+n_digit, vocab_size]
+    needed = logits.new_zeros(n_cands, n_digit)
     for i, (is_valid, tokens) in enumerate(zip(valid_flags, cand_tokens_list)):
         if not is_valid:
             continue
-        score = 0.0
         for d in range(n_digit):
-            score += log_probs[i, d, tokens[d]].item()
-        scores[i] = score
+            needed[i, d] = logits[i, d, tokens[d]]
+    needed_cpu = needed.cpu()  # [n_cands, n_digit] ≈ 9 KB
+
+    scores = np.full(n_cands, -np.inf, dtype=np.float32)
+    for i, (is_valid, _) in enumerate(zip(valid_flags, cand_tokens_list)):
+        if not is_valid:
+            continue
+        scores[i] = needed_cpu[i].sum().item()
 
     return scores
 

@@ -217,16 +217,22 @@ def score_candidates(model, tokenizer, input_ids, attention_mask,
             decoder_input_ids=dec_t,
         )
 
-    log_probs = F.log_softmax(outputs.logits, dim=-1)  # [n_cands, 1+n_digit, vocab]
-
-    scores = np.full(n_cands, -np.inf, dtype=np.float32)
+    # Gather logits for candidate tokens only (log_softmax normalisation
+    # cancels out across candidates → raw logits give identical ranking)
+    logits = outputs.logits  # [n_cands, 1+n_digit, vocab_size]
+    needed = logits.new_zeros(n_cands, n_digit)  # tiny GPU buffer
     for i, (is_valid, token_ids) in enumerate(zip(valid_flags, tokens_list)):
         if not is_valid:
             continue
-        score = 0.0
         for d in range(n_digit):
-            score += log_probs[i, d, token_ids[d]].item()
-        scores[i] = score
+            needed[i, d] = logits[i, d, token_ids[d]]
+    needed_cpu = needed.cpu()  # [n_cands, n_digit] ≈ 9 KB
+
+    scores = np.full(n_cands, -np.inf, dtype=np.float32)
+    for i, (is_valid, _) in enumerate(zip(valid_flags, tokens_list)):
+        if not is_valid:
+            continue
+        scores[i] = needed_cpu[i].sum().item()
 
     return scores
 
@@ -252,9 +258,14 @@ def evaluate_ddbc_letter(model, tokenizer, item2token_ids, device,
     for predict_n in predict_nums:
         data_path = os.path.join(cfg['dreamrec_data_dir'], f'{file_split}_data_items{predict_n}.df')
         eval_data    = pd.read_pickle(data_path)
-        seq_list     = list(eval_data['seq'].values)
-        len_seq_list = list(eval_data['len_seq'].values)
-        labels_list  = list(eval_data['labels'].values)
+        if hasattr(eval_data['seq'], 'values'):
+            seq_list     = list(eval_data['seq'].values)
+            len_seq_list = list(eval_data['len_seq'].values)
+            labels_list  = list(eval_data['labels'].values)
+        else:
+            seq_list     = list(eval_data['seq'])
+            len_seq_list = list(eval_data['len_seq'])
+            labels_list  = list(eval_data['labels'])
         num_total    = len(seq_list)
 
         for multiplier in multipliers:

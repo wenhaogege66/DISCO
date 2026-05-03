@@ -145,6 +145,7 @@ class Pipeline:
                     seed=self.trainer.ddbc_seed,
                     split='test',
                     config=self.config,
+                    predict_mode=self.trainer.ddbc_predict_mode,
                 )
                 self.log(f'[Test-only] DDBC test recall={test_recall:.4f}')
             else:
